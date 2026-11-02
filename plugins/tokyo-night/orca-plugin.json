@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 2,
+  "id": "tokyo-night",
+  "name": "Tokyo Night",
+  "version": "0.1.0",
+  "description": "Tokyo Night (Night) app theme: matches the Tokyo Night terminal palette across sidebars, tabs, chat and editor.",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "data",
+  "contributes": {
+    "themes": [
+      {
+        "id": "tokyo-night-dark",
+        "title": "Tokyo Night",
+        "path": "themes/dark.json"
+      }
+    ]
+  }
+}
