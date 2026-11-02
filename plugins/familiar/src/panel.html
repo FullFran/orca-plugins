@@ -8,15 +8,9 @@
   </head>
   <body>
     <main>
-      <label class="picker">
-        <span class="sr-only">Pet</span>
-        <select id="pet" aria-label="Pet" disabled></select>
-      </label>
-      <div class="stage" aria-live="polite">
-        <pre id="sprite" role="img" aria-label="familiard pet"></pre>
-      </div>
-      <p id="status" class="status"></p>
       <p id="error" class="error" hidden></p>
+      <p id="empty" class="empty" hidden>No agents yet. Start one in any workspace and it joins the class.</p>
+      <section id="class" class="class" aria-label="Agents"></section>
     </main>
     <script type="module" src="panel.ts"></script>
   </body>

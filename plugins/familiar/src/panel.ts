@@ -1,12 +1,13 @@
-// The panel frame: draws the pet and wires the controller to window.orca. Logic lives in
-// src/controller.ts (tested); this file only touches the DOM.
+// The panel frame: one card per agent, its pet playing that agent's clip. Logic lives in
+// src/controller.ts (tested); this file only touches the DOM and window.orca.
 import { parseAnsi, type Segment } from './ansi'
-import { createController, type PanelHost, type ViewState } from './controller'
+import { createController, type Card, type PanelHost, type ViewState } from './controller'
 import type { PetFrames, PetSummary } from './protocol'
-import type { AgentState, Clip } from './status'
+import type { ListedAgent } from './roster'
+import type { Clip } from './status'
 
 interface FrameOrca {
-  host: { call(method: string, params?: unknown, options?: { timeoutMs?: number }): Promise<any> }
+  host: { call(method: string, params?: unknown): Promise<any> }
   on(event: string, handler: (payload: any) => void): { dispose(): void }
 }
 
@@ -18,36 +19,60 @@ async function request<T>(name: string, input?: unknown): Promise<T> {
 }
 
 const host: PanelHost = {
+  now: () => Date.now(),
   pets: async () => (await request<{ pets: PetSummary[] }>('familiar.pets')).pets,
   frames: (id) => request<PetFrames>('familiar.frames', { id }),
-  agentStates: async () =>
-    ((await orca.host.call('agents.list', {})).agents as { state: AgentState }[]).map((a) => a.state),
+  workspaces: async () => (await request<{ workspaces: Record<string, string> }>('familiar.workspaces')).workspaces,
+  listAgents: async () => (await orca.host.call('agents.list', {})).agents as ListedAgent[],
+  focusedWorkspace: async () => ((await orca.host.call('workspace.readContext', {})) ?? null)?.displayName ?? null,
   storageGet: async (key) => (await orca.host.call('storage.get', { key })).value,
   storageSet: async (key, value) => {
     await orca.host.call('storage.set', { key, value })
   }
 }
 
-const picker = document.getElementById('pet') as HTMLSelectElement
-const sprite = document.getElementById('sprite') as HTMLPreElement
-const statusLine = document.getElementById('status') as HTMLParagraphElement
+const LABELS: Record<Clip, string> = { idle: 'Idle', working: 'Working', waiting: 'Needs you', done: 'Done' }
+
+const classroom = document.getElementById('class') as HTMLElement
+const emptyLine = document.getElementById('empty') as HTMLParagraphElement
 const errorLine = document.getElementById('error') as HTMLParagraphElement
 
-const LABELS: Record<Clip, string> = {
-  idle: 'Idle',
-  working: 'An agent is working',
-  waiting: 'An agent needs you',
-  done: 'Agents are done'
+/** Parsed frames per pet and clip, built once. */
+const parsed = new Map<string, Partial<Record<Clip, { fps: number; lines: Segment[][][] }>>>()
+
+function clipsOf(frames: PetFrames) {
+  let entry = parsed.get(frames.id)
+  if (!entry) {
+    entry = {}
+    for (const [name, clip] of Object.entries(frames.clips)) {
+      if (clip) entry[name as Clip] = { fps: clip.fps, lines: clip.frames.map(parseAnsi) }
+    }
+    parsed.set(frames.id, entry)
+  }
+  return entry
 }
 
-let parsed: Partial<Record<Clip, { fps: number; lines: Segment[][][] }>> = {}
-let parsedFor: PetFrames | null = null
-let playing: Clip | null = null
-let timer: ReturnType<typeof setInterval> | undefined
-let frameIndex = 0
-let petListKey = ''
+interface CardView {
+  root: HTMLButtonElement
+  sprite: HTMLPreElement
+  name: HTMLElement
+  meta: HTMLElement
+  badge: HTMLElement
+  time: HTMLElement
+  card: Card
+  drawn: string
+}
 
-function draw(lines: Segment[][]): void {
+const views = new Map<string, CardView>()
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, parent?: HTMLElement) {
+  const node = document.createElement(tag)
+  node.className = className
+  parent?.append(node)
+  return node
+}
+
+function draw(sprite: HTMLPreElement, lines: Segment[][]): void {
   const fragment = document.createDocumentFragment()
   lines.forEach((line, index) => {
     if (index > 0) fragment.append('\n')
@@ -66,77 +91,93 @@ function draw(lines: Segment[][]): void {
   sprite.replaceChildren(fragment)
 }
 
-function play(clip: Clip | null): void {
-  if (timer !== undefined) clearInterval(timer)
-  timer = undefined
-  playing = clip
-  frameIndex = 0
-  const entry = clip ? parsed[clip] : undefined
-  if (!entry) {
-    sprite.replaceChildren()
-    return
-  }
-  draw(entry.lines[0])
-  if (entry.lines.length > 1) {
-    timer = setInterval(() => {
-      if (document.hidden) return
-      frameIndex = (frameIndex + 1) % entry.lines.length
-      draw(entry.lines[frameIndex])
-    }, 1000 / entry.fps)
-  }
+function elapsed(since: number, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - since) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
-function renderPicker(state: ViewState): void {
-  const key = state.pets.map((pet) => pet.id).join('\n')
-  if (key !== petListKey) {
-    petListKey = key
-    const counts = new Map<string, number>()
-    for (const pet of state.pets) counts.set(pet.name, (counts.get(pet.name) ?? 0) + 1)
-    picker.replaceChildren(
-      ...state.pets.map((pet) => {
-        const option = document.createElement('option')
-        option.value = pet.id
-        option.textContent = (counts.get(pet.name) ?? 0) > 1 ? `${pet.name} (${pet.id})` : pet.name
-        return option
-      })
-    )
+function createView(card: Card): CardView {
+  const root = el('button', 'card')
+  root.type = 'button'
+  const stage = el('div', 'stage', root)
+  const sprite = el('pre', 'sprite', stage)
+  sprite.setAttribute('aria-hidden', 'true')
+  const name = el('div', 'name', root)
+  const meta = el('div', 'meta', root)
+  const state = el('div', 'state', root)
+  const badge = el('span', 'badge', state)
+  const time = el('span', 'time', state)
+  const view: CardView = { root, sprite, name, meta, badge, time, card, drawn: '' }
+  root.addEventListener('click', () => void controller.cyclePet(view.card.petKey))
+  return view
+}
+
+function animate(now: number): void {
+  for (const view of views.values()) {
+    const { card } = view
+    const clips = card.frames ? clipsOf(card.frames) : undefined
+    const clip = clips?.[card.clip] ?? clips?.idle // a pet without this clip idles
+    if (!clip) {
+      if (view.drawn !== '') view.sprite.replaceChildren()
+      view.drawn = ''
+      continue
+    }
+    const index = Math.floor((now * clip.fps) / 1000) % clip.lines.length
+    const stamp = `${card.pet}:${card.clip}:${index}`
+    if (stamp !== view.drawn) {
+      draw(view.sprite, clip.lines[index])
+      view.drawn = stamp
+    }
   }
-  if (state.selected) picker.value = state.selected
-  picker.disabled = state.pets.length === 0
 }
 
 function render(state: ViewState): void {
-  renderPicker(state)
-  if (state.frames !== parsedFor) {
-    parsedFor = state.frames
-    parsed = {}
-    for (const [name, clip] of Object.entries(state.frames?.clips ?? {})) {
-      if (clip) parsed[name as Clip] = { fps: clip.fps, lines: clip.frames.map(parseAnsi) }
-    }
-    playing = null
+  const now = Date.now()
+  const seen = new Set<string>()
+  const order: HTMLElement[] = []
+  for (const card of state.cards) {
+    seen.add(card.key)
+    const view = views.get(card.key) ?? createView(card)
+    views.set(card.key, view)
+    view.card = card
+    view.root.dataset.clip = card.clip
+    view.name.textContent = card.title
+    view.meta.textContent = [card.kind && card.kind !== card.title ? card.kind : null, card.workspace]
+      .filter(Boolean)
+      .join(' · ')
+    view.badge.textContent = LABELS[card.clip]
+    view.time.textContent = elapsed(card.since, now)
+    const petName = state.pets.find((pet) => pet.id === card.pet)?.name ?? card.pet ?? 'no pet'
+    view.root.title = `${card.title}: ${LABELS[card.clip]}. Pet: ${petName}. Click for another pet.`
+    view.root.setAttribute('aria-label', `${card.title}, ${card.workspace}, ${LABELS[card.clip]} for ${view.time.textContent}`)
+    order.push(view.root)
   }
-  // A pet without this clip falls back to idle.
-  const wanted: Clip | null = parsed[state.clip] ? state.clip : parsed.idle ? 'idle' : null
-  if (wanted !== playing) play(wanted)
-  sprite.setAttribute('aria-label', `${state.frames?.name || 'familiard pet'}: ${LABELS[state.clip]}`)
-  statusLine.textContent = state.loading && !state.frames ? 'Loading…' : LABELS[state.clip]
+  for (const [key, view] of views) {
+    if (!seen.has(key)) {
+      view.root.remove()
+      views.delete(key)
+    }
+  }
+  // Re-append in order only when it changed, so focus and hover survive updates.
+  const current = [...classroom.children]
+  if (current.length !== order.length || order.some((node, i) => current[i] !== node)) classroom.replaceChildren(...order)
+  emptyLine.hidden = state.cards.length > 0
   errorLine.hidden = state.error === null
   errorLine.textContent = state.error ?? ''
+  animate(now)
 }
 
 const controller = createController(host, render)
 
-let refreshTimer: ReturnType<typeof setTimeout> | undefined
-function scheduleRefresh(): void {
-  // Events arrive in bursts; agents.list always answers for the focused workspace.
-  if (refreshTimer !== undefined) clearTimeout(refreshTimer)
-  refreshTimer = setTimeout(() => {
-    refreshTimer = undefined
-    void controller.refreshAgents()
-  }, 150)
-}
+setInterval(() => {
+  if (!document.hidden) animate(Date.now())
+}, 125)
+setInterval(() => void controller.tick(), 30_000)
 
-picker.addEventListener('change', () => void controller.selectPet(picker.value))
-orca.on('agent.status.changed', scheduleRefresh)
-orca.on('workspace.changed', scheduleRefresh)
-void controller.start()
+void controller.start().then(() => {
+  orca.on('agent.status.changed', (payload) => void controller.onStatus(payload))
+  orca.on('workspace.changed', (payload) => void controller.onWorkspace(payload?.context ?? null))
+})

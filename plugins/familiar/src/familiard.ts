@@ -2,8 +2,8 @@
 import type { ClipFrames, PetFrames, PetSummary } from './protocol'
 import { CLIPS } from './status'
 
-/** Sprite height in terminal rows: fits the right sidebar. */
-export const ROWS = 10
+/** Sprite height in terminal rows: small enough that several cards fit the right sidebar. */
+export const ROWS = 8
 
 const PET_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/
 
@@ -53,4 +53,28 @@ export function parseFrames(output: string): PetFrames {
     rows: typeof data.rows === 'number' ? data.rows : ROWS,
     clips
   }
+}
+
+function basename(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? ''
+}
+
+/** `orca worktree list --json` → every id a workspace may go by, mapped to "repo · name". */
+export function parseWorkspaces(output: string): Record<string, string> {
+  const data: unknown = JSON.parse(output)
+  const rows = isRecord(data) && isRecord(data.result) ? data.result.worktrees : undefined
+  const map: Record<string, string> = {}
+  if (!Array.isArray(rows)) return map
+  for (const row of rows) {
+    if (!isRecord(row)) continue
+    const repo = typeof row.path === 'string' ? basename(row.path) : ''
+    const branch = typeof row.branch === 'string' ? row.branch.replace(/^refs\/heads\//, '') : ''
+    const name = typeof row.displayName === 'string' && row.displayName !== '' ? row.displayName : branch
+    const label = [repo, name].filter(Boolean).join(' · ')
+    if (!label) continue
+    const ids = [row.id, isRecord(row.identity) ? row.identity.key : undefined, row.instanceId]
+    for (const id of ids) if (typeof id === 'string' && id !== '') map[id] = label
+  }
+  return map
 }

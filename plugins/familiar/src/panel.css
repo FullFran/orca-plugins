@@ -1,4 +1,4 @@
-/* Chrome uses Orca's frame variables; the pet's own colors come from its frames. */
+/* Chrome uses Orca's frame variables; each pet's own colors come from its frames. */
 :root {
   color-scheme: light dark;
 }
@@ -7,60 +7,96 @@ body {
   margin: 0;
   background: var(--orca-background, Canvas);
   color: var(--orca-foreground, CanvasText);
-  font: 13px/1.4 system-ui, sans-serif;
+  font: 12px/1.35 system-ui, sans-serif;
 }
 main {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 8px;
 }
-.picker select {
-  width: 100%;
-  padding: 4px 6px;
-  border: 1px solid var(--orca-input, var(--orca-border, GrayText));
+.class {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--orca-border, GrayText);
   border-radius: var(--orca-radius, 6px);
-  background: var(--orca-background, Canvas);
-  color: var(--orca-foreground, CanvasText);
+  background: var(--orca-card, transparent);
+  color: var(--orca-card-foreground, inherit);
   font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.picker select:focus-visible {
+.card:hover {
+  background: var(--orca-accent, transparent);
+  color: var(--orca-accent-foreground, inherit);
+}
+.card:focus-visible {
   outline: 2px solid var(--orca-ring, Highlight);
   outline-offset: 1px;
+}
+.card[data-clip='waiting'] {
+  border-color: var(--orca-primary, Highlight);
 }
 .stage {
   display: flex;
   justify-content: center;
-  padding: 12px 0;
-  border: 1px solid var(--orca-border, GrayText);
-  border-radius: var(--orca-radius, 6px);
-  background: var(--orca-card, transparent);
+  min-height: 8em;
   overflow: hidden;
 }
-#sprite {
+.sprite {
   margin: 0;
   font-family: ui-monospace, 'DejaVu Sans Mono', monospace;
-  font-size: 14px;
+  font-size: 9px;
   line-height: 1;
   letter-spacing: 0;
   white-space: pre;
 }
-.status {
-  margin: 0;
-  text-align: center;
+.name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meta {
   color: var(--orca-muted-foreground, GrayText);
-  font-size: 12px;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.state {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 11px;
+}
+.badge {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--orca-secondary, transparent);
+  color: var(--orca-secondary-foreground, inherit);
+}
+.card[data-clip='waiting'] .badge {
+  background: var(--orca-primary, Highlight);
+  color: var(--orca-primary-foreground, HighlightText);
+}
+.empty {
+  margin: 0;
+  color: var(--orca-muted-foreground, GrayText);
+  text-align: center;
+  padding: 16px 0;
 }
 .error {
   margin: 0;
   color: var(--orca-destructive, #c00);
-  font-size: 12px;
   overflow-wrap: anywhere;
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
 }

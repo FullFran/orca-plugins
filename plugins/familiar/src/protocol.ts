@@ -25,5 +25,7 @@ declare module 'orca' {
     'familiar.pets': { output: { pets: PetSummary[] } }
     /** One pet's animation clips (`familiard frames <id> --rows N`). */
     'familiar.frames': { input: { id: string }; output: PetFrames }
+    /** Workspace ids (any form Orca uses) to "repo · name", from `orca worktree list --json`. */
+    'familiar.workspaces': { output: { workspaces: Record<string, string> } }
   }
 }

@@ -2,8 +2,8 @@
   "manifestVersion": 2,
   "id": "familiar",
   "name": "Familiar",
-  "version": "0.1.0",
-  "description": "Your familiard pet in the sidebar, animated by what the workspace's agents are doing.",
+  "version": "0.2.0",
+  "description": "A classroom of familiard pets in the sidebar: one per agent, animated by its status.",
   "engines": {
     "orca": ">=1.4.246"
   },

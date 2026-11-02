@@ -19,9 +19,28 @@ const FRAMES = JSON.stringify({
   }
 })
 
+const WORKTREES = JSON.stringify({
+  ok: true,
+  result: {
+    worktrees: [
+      {
+        id: 'repo-1::/home/fran/code/orca-plugins',
+        identity: { key: 'wt2:local:inst-1' },
+        instanceId: 'inst-1',
+        path: '/home/fran/code/orca-plugins',
+        displayName: 'main'
+      },
+      { id: 'repo-2::/srv/blog', path: '/srv/blog', displayName: '' , branch: 'refs/heads/draft' },
+      { displayName: 'no id' },
+      7
+    ]
+  }
+})
+
 function fakeRunner(calls: string[][]): Runner {
-  return async (args) => {
-    calls.push(args)
+  return async (args, program) => {
+    calls.push(program === 'orca' ? ['orca', ...args] : args)
+    if (program === 'orca' && args[0] === 'worktree') return WORKTREES
     if (args[0] === 'pets') return PETS
     if (args[0] === 'frames') return FRAMES
     throw new Error('unexpected command')
@@ -47,7 +66,7 @@ test('loads a pet frames with the panel row count', async () => {
   const calls: string[][] = []
   const worker = await mountWorker({ default: createActivate(fakeRunner(calls)) }, { host: mockHost() })
   const answer = await worker.request('familiar.frames', { id: 'iria' })
-  assert.deepEqual(calls, [['frames', 'iria', '--rows', '10']])
+  assert.deepEqual(calls, [['frames', 'iria', '--rows', '8']])
   assert.equal(answer.id, 'iria')
   assert.equal(answer.rows, 10)
   assert.deepEqual(answer.clips.idle, { fps: 3, frames: ['a', 'b'] })
@@ -89,5 +108,42 @@ test('reports familiard failures as action_failed', async () => {
 test('reports unparseable output as action_failed', async () => {
   const worker = await mountWorker({ default: createActivate(async () => 'not json') }, { host: mockHost() })
   await assert.rejects(worker.request('familiar.pets'), { code: 'action_failed' })
+  await worker.deactivate()
+})
+
+test('caches frames per pet', async () => {
+  const calls: string[][] = []
+  const worker = await mountWorker({ default: createActivate(fakeRunner(calls)) }, { host: mockHost() })
+  await worker.request('familiar.frames', { id: 'iria' })
+  await worker.request('familiar.frames', { id: 'iria' })
+  assert.deepEqual(calls, [['frames', 'iria', '--rows', '8']])
+  await worker.deactivate()
+})
+
+test('resolves workspace ids to repo and name from orca worktree list', async () => {
+  const calls: string[][] = []
+  const worker = await mountWorker({ default: createActivate(fakeRunner(calls)) }, { host: mockHost() })
+  const answer = await worker.request('familiar.workspaces')
+  assert.deepEqual(calls, [['orca', 'worktree', 'list', '--json']])
+  assert.deepEqual(answer, {
+    workspaces: {
+      'repo-1::/home/fran/code/orca-plugins': 'orca-plugins · main',
+      'wt2:local:inst-1': 'orca-plugins · main',
+      'inst-1': 'orca-plugins · main',
+      'repo-2::/srv/blog': 'blog · draft'
+    }
+  })
+  await worker.request('familiar.workspaces')
+  assert.equal(calls.length, 1, 'answers from a short cache')
+  await worker.deactivate()
+})
+
+test('an orca CLI failure gives an empty workspace map, not an error', async () => {
+  const runner: Runner = async (_args, program) => {
+    if (program === 'orca') throw new Error('orca not running')
+    return PETS
+  }
+  const worker = await mountWorker({ default: createActivate(runner) }, { host: mockHost() })
+  assert.deepEqual(await worker.request('familiar.workspaces'), { workspaces: {} })
   await worker.deactivate()
 })
