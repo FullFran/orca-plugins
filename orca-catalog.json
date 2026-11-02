@@ -75,6 +75,37 @@
           "repository": "https://github.com/FullFran/orca-plugins"
         }
       ]
+    },
+    {
+      "id": "fullfran.quota-pace",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/FullFran/orca-plugins.git",
+        "ref": "main",
+        "path": "plugins/quota-pace"
+      },
+      "description": "Spreads what is left of each weekly AI-agent quota over the days until it resets: today's allowance and how much of it is left.",
+      "releases": [
+        {
+          "version": "0.2.0",
+          "commit": "161e7de56bc961b76173a14b2af640768090c4b6",
+          "contentHash": "d30e53a7190979b49cb768e4cd384547edce274239e5ddde3918e397cdbbbe3e",
+          "execution": "trusted-worker",
+          "minimumOrca": "1.4.246",
+          "name": "Quota Pace",
+          "contributes": [
+            {
+              "kind": "panels",
+              "name": "Quota Pace"
+            }
+          ],
+          "capabilities": [
+            "storage:own"
+          ],
+          "updatedAt": "2026-11-02",
+          "repository": "https://github.com/FullFran/orca-plugins"
+        }
+      ]
     }
   ]
 }
