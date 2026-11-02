@@ -19,7 +19,7 @@ Objective: personal Orca plugins in their own repo, installed from dotfiles. Bra
 | T2 | S2 | inline | done (pending load in Orca) | 89e2039; RED 0/3 → GREEN 3/3 `plugin test`; `plugin validate` ok; `plugin check` 82 elements, 0 errors |
 | T3 | S4 | inline | done | dotfiles 34bf606 (`scripts/orca-settings.sh`, `orca/`), test 18/18 `scripts/tests/orca-settings-test.sh`, live `save`+`diff` in sync |
 | T4 | S3 | inline | pending | |
-| T6 | L-theme | inline | done local (push pending user OK) | tokyo-night 0.1.0 app theme (data plugin); `plugin validate` ok, WCAG contrast script: no pair under Orca thresholds |
+| T6 | L-theme | inline | done, published (catalog 781ceef, dotfiles ae90a7f) | tokyo-night 0.1.0 app theme (data plugin); `plugin validate` ok, WCAG contrast script: no pair under Orca thresholds |
 | T5 | S5 | inline | done | repo public (user: "dejalo publico y habilita la actualizacion!"); orca-catalog.json + scripts/release.sh, fran-shortcuts 0.1.0 @ 02f7ce5 (e797d24); dotfiles 28a95ec installs from the catalog |
 
 ## Log
