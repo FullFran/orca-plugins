@@ -26,7 +26,7 @@ Objective: personal Orca plugins in their own repo, installed from dotfiles. Bra
 | T6 | L-theme | inline | done, published (catalog 781ceef, dotfiles ae90a7f) | tokyo-night 0.1.0 app theme (data plugin); `plugin validate` ok, WCAG contrast script: no pair under Orca thresholds |
 | T7 | S7 | delegated (writer trigger a: parallel with T8, T9) | done local, pending live check in Orca | `plugin test` 4 files pass (22 tests), `validate` ok; html panel (components panels take no colours) |
 | T8 | S8 | delegated (writer trigger a: parallel with T7) | in progress | |
-| T9 | S9 | delegated (writer trigger a: parallel with T7, T8) | in progress | |
+| T9 | S9 | delegated (writer trigger a: parallel with T7, T8) | done local, pending live check in Orca | `plugin test` 26/26, `validate` ok, `check` 3 scenarios 0 issues; live CLI read: Claude 60%, 3.46 d, 11.6%/day |
 | T5 | S5 | inline | done | repo public (user: "dejalo publico y habilita la actualizacion!"); orca-catalog.json + scripts/release.sh, fran-shortcuts 0.1.0 @ 02f7ce5 (e797d24); dotfiles 28a95ec installs from the catalog |
 
 ## Log
