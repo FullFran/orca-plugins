@@ -43,6 +43,22 @@
       "description": "Tokyo Night (Night) app theme: matches the Tokyo Night terminal palette across sidebars, tabs, chat and editor.",
       "releases": [
         {
+          "version": "0.1.1",
+          "commit": "16a4e791982b0b7ff2594c86c3ca4907096d870c",
+          "contentHash": "74666c9297d5bd4062313de0618d2c39e8c89c645074cb83ffffd6cc142497ef",
+          "execution": "data",
+          "minimumOrca": "1.4.246",
+          "name": "Tokyo Night",
+          "contributes": [
+            {
+              "kind": "themes",
+              "name": "Tokyo Night"
+            }
+          ],
+          "updatedAt": "2026-11-02",
+          "repository": "https://github.com/FullFran/orca-plugins"
+        },
+        {
           "version": "0.1.0",
           "commit": "92cc4e57c7e9502d65d16e7a4b2266cfc7d65245",
           "contentHash": "59e1b5741c083d8102c9416727034307f19475d0e4367d3173722b7538932770",
