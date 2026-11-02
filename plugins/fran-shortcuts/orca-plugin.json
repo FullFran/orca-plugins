@@ -1,0 +1,23 @@
+{
+  "manifestVersion": 2,
+  "id": "fran-shortcuts",
+  "name": "Fran Shortcuts",
+  "version": "0.1.0",
+  "description": "Searchable cheat sheet of Fran's Orca shortcuts (tmux-style Ctrl+Shift layer).",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "sandboxed-ui",
+  "pluginApi": 1,
+  "contributes": {
+    "panels": [
+      {
+        "id": "fran-shortcuts",
+        "title": "Shortcuts",
+        "icon": "book",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ]
+  }
+}
