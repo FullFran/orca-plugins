@@ -1,0 +1,42 @@
+{
+  "manifestVersion": 2,
+  "id": "engram-memory",
+  "name": "Engram Memory",
+  "version": "0.1.0",
+  "description": "Read-only view of the Engram memories of the focused workspace's project: recent ones, search and full detail, from Engram's local HTTP API.",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "engram-memory",
+        "title": "Engram",
+        "icon": "lightbulb",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "settings": [
+      {
+        "key": "serverUrl",
+        "title": "Engram server URL",
+        "description": "Where `engram serve` listens. The plugin only sends GET requests to it.",
+        "type": "string",
+        "default": "http://127.0.0.1:7437",
+        "placeholder": "http://127.0.0.1:7437"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "settings:own"
+    }
+  ]
+}
