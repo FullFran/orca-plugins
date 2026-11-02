@@ -1,5 +1,5 @@
 // Fran's Orca shortcuts. Mirrors the keybinding overrides applied to Orca
-// (dotfiles copy: keybindings-fran.json). The Ctrl+Shift layer copies his
+// (source of truth: dotfiles orca/orca-settings.json). The Ctrl+Shift layer copies his
 // tmux bindings without a prefix; Ctrl+h/j/k/l stay with the terminal.
 
 export type Shortcut = { keys: string; action: string; note?: string }
