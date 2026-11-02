@@ -1,0 +1,29 @@
+{
+  "manifestVersion": 2,
+  "id": "familiar",
+  "name": "Familiar",
+  "version": "0.1.0",
+  "description": "Your familiard pet in the sidebar, animated by what the workspace's agents are doing.",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "familiar",
+        "title": "Familiar",
+        "icon": "star",
+        "entry": "src/panel.html",
+        "ui": "html"
+      }
+    ]
+  },
+  "capabilities": [
+    { "kind": "agent:read" },
+    { "kind": "workspace:read" },
+    { "kind": "storage:own" }
+  ]
+}

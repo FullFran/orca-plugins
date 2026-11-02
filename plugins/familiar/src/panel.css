@@ -1,0 +1,66 @@
+/* Chrome uses Orca's frame variables; the pet's own colors come from its frames. */
+:root {
+  color-scheme: light dark;
+}
+html,
+body {
+  margin: 0;
+  background: var(--orca-background, Canvas);
+  color: var(--orca-foreground, CanvasText);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.picker select {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--orca-input, var(--orca-border, GrayText));
+  border-radius: var(--orca-radius, 6px);
+  background: var(--orca-background, Canvas);
+  color: var(--orca-foreground, CanvasText);
+  font: inherit;
+}
+.picker select:focus-visible {
+  outline: 2px solid var(--orca-ring, Highlight);
+  outline-offset: 1px;
+}
+.stage {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+  border: 1px solid var(--orca-border, GrayText);
+  border-radius: var(--orca-radius, 6px);
+  background: var(--orca-card, transparent);
+  overflow: hidden;
+}
+#sprite {
+  margin: 0;
+  font-family: ui-monospace, 'DejaVu Sans Mono', monospace;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: pre;
+}
+.status {
+  margin: 0;
+  text-align: center;
+  color: var(--orca-muted-foreground, GrayText);
+  font-size: 12px;
+}
+.error {
+  margin: 0;
+  color: var(--orca-destructive, #c00);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}

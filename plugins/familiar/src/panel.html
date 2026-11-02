@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Familiar</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <main>
+      <label class="picker">
+        <span class="sr-only">Pet</span>
+        <select id="pet" aria-label="Pet" disabled></select>
+      </label>
+      <div class="stage" aria-live="polite">
+        <pre id="sprite" role="img" aria-label="familiard pet"></pre>
+      </div>
+      <p id="status" class="status"></p>
+      <p id="error" class="error" hidden></p>
+    </main>
+    <script type="module" src="panel.ts"></script>
+  </body>
+</html>

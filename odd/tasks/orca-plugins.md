@@ -11,6 +11,10 @@ Objective: personal Orca plugins in their own repo, installed from dotfiles. Bra
 - S6. Idea (2026-11-02, user): "podriamos hacer un plugin de familiard xD" — not specified yet.
 - S5. Publishing to GitHub (visibility, catalog) only when the user asks.
 
+- S7 (familiard): user: "4 jeje hazlo!" on "**El plugin de familiard**, el que te gustó." Scope (parent decision): right-sidebar panel `fullfran.familiar` that shows a familiard pet as text animation (`familiard frames <pet> --rows N` JSON: clips idle/working/waiting/done with fps and ANSI frames) and switches clip by the focused workspace's agent status (`agents.list` + `agent.status.changed`); pet chosen from `familiard pets --json`, remembered in plugin storage. Read-only towards the system: never summons, dismisses or edits pets.
+- S8 (engram): user: "el panel de engram es muy buena mierda" on "**El panel de engram**, para luego proponérselo al repo de engram." Scope (parent decision): right-sidebar panel `fullfran.engram-memory` that resolves the focused workspace's engram project and lists its recent memories, with search and a detail view, through the local engram HTTP API (127.0.0.1:7437). Read-only: no save, delete, pin or judge.
+
+- S9 (quota pace): user (dictated): "un pequeño plugin que me muestre cuánto tengo disponible para el día con esta estimación ... yo tengo 7 días a la semana, entonces me puedo gastar hasta el porcentaje que me toca de aquí a que se res[etee] ... cada día que pasa esta cuota la puedo equispaciar entre más". Scope (parent decision): right-sidebar panel `fullfran.quota-pace` reading `orca account list --json` -> `result.rateLimits.<provider>.<window>` (`usedPercent`, `windowMinutes`, `resetsAt` ms). For every weekly window (windowMinutes 10080): today's allowance = (100 - usedPercent at local start of today) / days left from local start of today to resetsAt (fractional); remaining today = allowance - (usedNow - usedAtStartOfToday). Read-only.
 ## Tasks
 
 | ID | Specs | Route | Status | Evidence |
@@ -20,6 +24,9 @@ Objective: personal Orca plugins in their own repo, installed from dotfiles. Bra
 | T3 | S4 | inline | done | dotfiles 34bf606 (`scripts/orca-settings.sh`, `orca/`), test 18/18 `scripts/tests/orca-settings-test.sh`, live `save`+`diff` in sync |
 | T4 | S3 | inline | pending | |
 | T6 | L-theme | inline | done, published (catalog 781ceef, dotfiles ae90a7f) | tokyo-night 0.1.0 app theme (data plugin); `plugin validate` ok, WCAG contrast script: no pair under Orca thresholds |
+| T7 | S7 | delegated (writer trigger a: parallel with T8, T9) | done local, pending live check in Orca | `plugin test` 4 files pass (22 tests), `validate` ok; html panel (components panels take no colours) |
+| T8 | S8 | delegated (writer trigger a: parallel with T7) | in progress | |
+| T9 | S9 | delegated (writer trigger a: parallel with T7, T8) | in progress | |
 | T5 | S5 | inline | done | repo public (user: "dejalo publico y habilita la actualizacion!"); orca-catalog.json + scripts/release.sh, fran-shortcuts 0.1.0 @ 02f7ce5 (e797d24); dotfiles 28a95ec installs from the catalog |
 
 ## Log
