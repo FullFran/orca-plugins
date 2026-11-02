@@ -10,3 +10,11 @@ whole window (sidebars, tabs, chat, editor, diffs and git decorations) reads as 
 - Only a dark theme is shipped; the light slot keeps Orca's default.
 
 Select it in Settings → Appearance → Dark theme after installing.
+
+## Chart tokens are a dark blue ramp
+
+Orca paints Mermaid diagrams from the chart tokens: `--chart-5` fills nodes and actors,
+`--chart-4` and `--chart-3` fill secondary and tertiary shapes, `--chart-1` draws borders, and
+all text uses `--foreground`. So `--chart-3`..`--chart-5` stay dark (at least 4.5:1 against
+`#c0caf5`), following Orca's own light-to-dark blue ramp. Bright accents there make diagram
+labels unreadable.

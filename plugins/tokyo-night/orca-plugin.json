@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "tokyo-night",
   "name": "Tokyo Night",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tokyo Night (Night) app theme: matches the Tokyo Night terminal palette across sidebars, tabs, chat and editor.",
   "engines": {
     "orca": ">=1.4.246"
