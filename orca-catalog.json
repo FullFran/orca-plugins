@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-catalog.v2.schema.json",
+  "catalogVersion": 2,
+  "name": "FullFran Orca plugins",
+  "owner": "FullFran",
+  "plugins": [
+    {
+      "id": "fullfran.fran-shortcuts",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/FullFran/orca-plugins.git",
+        "ref": "main",
+        "path": "plugins/fran-shortcuts"
+      },
+      "description": "Searchable cheat sheet of Fran's Orca shortcuts (tmux-style Ctrl+Shift layer).",
+      "releases": [
+        {
+          "version": "0.1.0",
+          "commit": "02f7ce53544c833ca47608db4133f8e1f893fd74",
+          "contentHash": "3d230d42cb93f487b6ff0e4172cc789c17f9036ff16f75986979c65a76c8639d",
+          "execution": "sandboxed-ui",
+          "minimumOrca": "1.4.246",
+          "name": "Fran Shortcuts",
+          "contributes": [
+            {
+              "kind": "panels",
+              "name": "Shortcuts"
+            }
+          ],
+          "updatedAt": "2026-11-02",
+          "repository": "https://github.com/FullFran/orca-plugins"
+        }
+      ]
+    }
+  ]
+}
