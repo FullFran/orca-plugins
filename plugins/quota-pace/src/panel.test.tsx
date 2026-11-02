@@ -14,6 +14,7 @@ function paceRow(overrides: Partial<PaceRow> = {}): PaceRow {
     usedNow: 70,
     usedAtStart: 60,
     baselineSince: MIDNIGHT,
+    baselineSource: 'reading',
     resetsAt: MIDNIGHT + 2.5 * 86_400_000,
     resetDescription: 'jue, 12:00',
     daysLeft: 2.5,
@@ -112,5 +113,18 @@ test('a CLI error with no windows shows an empty state with the reason', async (
   assert.ok(view.find({ type: 'EmptyState' }))
   assert.match(JSON.stringify(view.tree()), /spawn orca-ide ENOENT/)
   assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('says where the start of today comes from', async () => {
+  const both = snapshot({
+    rows: [
+      paceRow({ key: 'a', baselineSource: 'history', baselineSince: MIDNIGHT }),
+      paceRow({ key: 'b', baselineSource: 'estimate', baselineSince: MIDNIGHT })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => both } }) })
+  assert.match(texts(view), /Start of today from claudeops/)
+  assert.match(texts(view), /estimated from Orca's token statistics/)
   await view.unmount()
 })

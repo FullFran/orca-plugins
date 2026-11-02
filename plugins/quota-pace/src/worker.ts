@@ -4,9 +4,20 @@
 // orca.storage (storage:own), so a restart keeps them.
 import { execFile } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { buildRows, extractWeeklyWindows, type Baseline, type PaceSnapshot } from './pace'
+import {
+  buildRows,
+  extractWeeklyWindows,
+  parseClaudeopsHistory,
+  parseOrcaDailyUsage,
+  type Baseline,
+  type DailyUsage,
+  type PaceSnapshot,
+  type UsageHistory
+} from './pace'
 
 export const POLL_MS = 5 * 60_000
 const BASELINES = 'baselines'
@@ -18,6 +29,46 @@ export interface WorkerDeps {
   now(): number
   /** Calls `fn` every `ms`; returns the cancel. */
   schedule(fn: () => Promise<void> | void, ms: number): () => void
+  /** Reads and parses a JSON file; rejects when it is missing or unreadable. Optional in tests. */
+  readJson?(file: string): Promise<unknown>
+}
+
+/** Orca's data folder, where it keeps its usage statistics. */
+function orcaDataDir(home: string): string {
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'orca')
+  if (process.platform === 'win32') return path.join(process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'orca')
+  return path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'orca')
+}
+
+async function tryRead(deps: WorkerDeps, file: string): Promise<unknown> {
+  if (!deps.readJson) return null
+  try {
+    return await deps.readJson(file)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Usage recorded before this plugin ran: claudeops' log of Claude's weekly utilization, and Orca's
+ * daily token statistics for Claude (all models, and Fable alone) and Codex. All optional.
+ */
+async function readUsageSources(deps: WorkerDeps): Promise<{ history: UsageHistory; daily: DailyUsage }> {
+  const home = os.homedir()
+  const data = orcaDataDir(home)
+  const [claudeops, claude, codex] = await Promise.all([
+    tryRead(deps, path.join(home, '.claudeops', 'snapshot-cache.json')),
+    tryRead(deps, path.join(data, 'orca-claude-usage.json')),
+    tryRead(deps, path.join(data, 'orca-codex-usage.json'))
+  ])
+  return {
+    history: parseClaudeopsHistory(claudeops),
+    daily: {
+      'claude.weekly': parseOrcaDailyUsage(claude),
+      'claude.fableWeekly': parseOrcaDailyUsage(claude, 'fable'),
+      'codex.weekly': parseOrcaDailyUsage(codex)
+    }
+  }
 }
 
 /** The CLI candidates: the one shipped next to the running Orca first, then PATH. */
@@ -100,7 +151,8 @@ export function createWorker(deps: WorkerDeps) {
     let snapshot: PaceSnapshot
     try {
       const { windows, issues } = extractWeeklyWindows(parseRateLimits(await deps.run()))
-      const { rows, baselines } = buildRows(windows, await storedBaselines(orca), now)
+      const { history, daily } = await readUsageSources(deps)
+      const { rows, baselines } = buildRows(windows, await storedBaselines(orca), now, history, daily)
       await orca.storage.set(BASELINES, baselines)
       snapshot = { fetchedAt: now, rows, issues, error: null }
     } catch (error) {
@@ -141,6 +193,7 @@ export function createWorker(deps: WorkerDeps) {
 const worker = createWorker({
   run: runAccountList,
   now: () => Date.now(),
+  readJson: async (file) => JSON.parse(await readFile(file, 'utf8')),
   schedule: (fn, ms) => {
     const timer = setInterval(() => void fn(), ms)
     return () => clearInterval(timer)

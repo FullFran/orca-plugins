@@ -32,7 +32,14 @@ export interface Baseline {
   resetsAt: number
   /** When that first reading happened (midnight or later). */
   firstSeenAt: number
+  /**
+   * Where it came from: this plugin's own first reading, a recorded reading (claudeops), or an
+   * estimate from Orca's daily token statistics. Missing on baselines stored by 0.1.0.
+   */
+  source?: BaselineSource
 }
+
+export type BaselineSource = 'reading' | 'history' | 'estimate'
 
 export interface Pace {
   daysLeft: number
@@ -51,6 +58,7 @@ export interface PaceRow extends Pace {
   usedNow: number
   usedAtStart: number
   baselineSince: number
+  baselineSource: BaselineSource
   resetsAt: number
   resetDescription: string | null
 }
@@ -159,7 +167,7 @@ export function nextBaseline(previous: Baseline | undefined, window: WeeklyWindo
     Math.abs(window.resetsAt - previous.resetsAt) <= RESET_JITTER_MS &&
     window.usedPercent >= previous.usedAtStart
   if (keep) return previous
-  return { date, usedAtStart: window.usedPercent, resetsAt: window.resetsAt, firstSeenAt: now }
+  return { date, usedAtStart: window.usedPercent, resetsAt: window.resetsAt, firstSeenAt: now, source: 'reading' }
 }
 
 /**
@@ -189,15 +197,168 @@ export function computePace(input: {
   }
 }
 
-/** Applies the baselines to fresh windows: the rows to draw and the baselines to store. */
+/** One past reading of a window's usedPercent. */
+export interface UsageSample {
+  /** ms since the epoch. */
+  at: number
+  used: number
+}
+
+/** Past readings per window key, from a source that recorded them before this plugin ran. */
+export type UsageHistory = Record<string, UsageSample[]>
+
+const WEEK_MS = 7 * DAY_MS
+
+/**
+ * Today's baseline from recorded history: the last reading before local midnight in the current
+ * week window, or else the first reading of today. Readings from an earlier week window, or above
+ * the current usage, are ignored. Undefined when nothing fits.
+ */
+export function baselineFromHistory(
+  samples: UsageSample[],
+  window: WeeklyWindow,
+  now: number
+): Baseline | undefined {
+  const midnight = startOfLocalDay(now)
+  const weekStart = window.resetsAt - WEEK_MS
+  const valid = samples
+    .filter((s) => s.at >= weekStart && s.at <= now && s.used <= window.usedPercent)
+    .sort((a, b) => a.at - b.at)
+  const beforeMidnight = valid.filter((s) => s.at < midnight).pop()
+  const date = localDateKey(now)
+  if (beforeMidnight) {
+    return { date, usedAtStart: beforeMidnight.used, resetsAt: window.resetsAt, firstSeenAt: midnight, source: 'history' }
+  }
+  const firstToday = valid.find((s) => s.at >= midnight)
+  if (firstToday) {
+    return { date, usedAtStart: firstToday.used, resetsAt: window.resetsAt, firstSeenAt: firstToday.at, source: 'history' }
+  }
+  return undefined
+}
+
+/**
+ * Claude's weekly utilization log from claudeops (`~/.claudeops/snapshot-cache.json`,
+ * `history.windows["7d"]`, entries `{ at: ISO time, utilization: percent }`), as `claude.weekly`.
+ * Anything malformed is dropped.
+ */
+export function parseClaudeopsHistory(json: unknown): UsageHistory {
+  const windows = (json as { history?: { windows?: unknown } } | null)?.history?.windows
+  if (!windows || typeof windows !== 'object') return {}
+  const week = (windows as Record<string, unknown>)['7d']
+  if (!Array.isArray(week)) return {}
+  const samples: UsageSample[] = []
+  for (const entry of week) {
+    const at = Date.parse(String((entry as { at?: unknown })?.at))
+    const used = (entry as { utilization?: unknown })?.utilization
+    if (Number.isFinite(at) && typeof used === 'number' && Number.isFinite(used)) samples.push({ at, used })
+  }
+  return samples.length > 0 ? { 'claude.weekly': samples } : {}
+}
+
+/** Tokens spent on one local day (`YYYY-MM-DD`). */
+export interface DailyTokens {
+  day: string
+  tokens: number
+}
+
+/** Daily token totals per window key, from Orca's usage statistics. */
+export type DailyUsage = Record<string, DailyTokens[]>
+
+function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+/**
+ * Orca's daily usage aggregates (`orca-<provider>-usage.json`, `dailyAggregates`) as tokens per
+ * day, optionally only for models whose name contains `model`. Cache reads are left out (Claude's
+ * `cacheReadTokens`, Codex's `cachedInputTokens` inside `inputTokens`): they cost almost no quota.
+ */
+export function parseOrcaDailyUsage(json: unknown, model?: string): DailyTokens[] {
+  const rows = (json as { dailyAggregates?: unknown } | null)?.dailyAggregates
+  if (!Array.isArray(rows)) return []
+  const byDay = new Map<string, number>()
+  for (const row of rows as Record<string, unknown>[]) {
+    const day = row?.day
+    if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
+    if (model && !String(row.model ?? '').toLowerCase().includes(model)) continue
+    const input = Math.max(0, num(row.inputTokens) - num(row.cachedInputTokens))
+    const tokens = input + num(row.outputTokens) + num(row.cacheWriteTokens)
+    byDay.set(day, (byDay.get(day) ?? 0) + tokens)
+  }
+  return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, tokens]) => ({ day, tokens }))
+}
+
+function localDayStart(day: string): number {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(y, m - 1, d, 0, 0, 0, 0).getTime()
+}
+
+/**
+ * Today's baseline estimated from Orca's daily tokens: usedAtStart = usedNow x (1 - share), where
+ * share = today's tokens / this week window's tokens. Each day counts by how much of it falls inside
+ * the window (the first day only partly). Undefined without tokens today or this week.
+ */
+export function estimateBaselineFromDaily(
+  daily: DailyTokens[],
+  window: WeeklyWindow,
+  now: number
+): Baseline | undefined {
+  const midnight = startOfLocalDay(now)
+  const weekStart = window.resetsAt - WEEK_MS
+  const today = localDateKey(now)
+  let week = 0
+  let todayTokens = 0
+  for (const { day, tokens } of daily) {
+    const start = localDayStart(day)
+    const end = start + DAY_MS
+    const overlap = Math.min(end, now) - Math.max(start, weekStart)
+    if (overlap <= 0 || tokens <= 0) continue
+    const span = day === today ? overlap : DAY_MS
+    week += tokens * Math.min(1, overlap / span)
+    if (day === today) todayTokens += tokens
+  }
+  if (todayTokens <= 0 || week <= 0) return undefined
+  const share = Math.min(1, todayTokens / week)
+  return {
+    date: today,
+    usedAtStart: window.usedPercent * (1 - share),
+    resetsAt: window.resetsAt,
+    firstSeenAt: midnight,
+    source: 'estimate'
+  }
+}
+
+const SOURCE_RANK: Record<BaselineSource, number> = { history: 0, estimate: 1, reading: 2 }
+
+/**
+ * Applies the baselines to fresh windows: the rows to draw and the baselines to store. Of the
+ * candidates (recorded history, an estimate from Orca's daily tokens, this plugin's own first
+ * reading), the one that starts earliest today wins, because it saw usage the others missed; on a
+ * tie, recorded history beats an estimate, which beats a plain reading.
+ */
 export function buildRows(
   windows: WeeklyWindow[],
   stored: Record<string, Baseline>,
-  now: number
+  now: number,
+  history: UsageHistory = {},
+  daily: DailyUsage = {}
 ): { rows: PaceRow[]; baselines: Record<string, Baseline> } {
   const baselines: Record<string, Baseline> = {}
   const rows = windows.map((w) => {
-    const baseline = nextBaseline(stored[w.key], w, now)
+    const candidates = [
+      baselineFromHistory(history[w.key] ?? [], w, now),
+      estimateBaselineFromDaily(daily[w.key] ?? [], w, now),
+      nextBaseline(stored[w.key], w, now)
+    ].filter((b): b is Baseline => b !== undefined)
+    const rank = (b: Baseline) => SOURCE_RANK[b.source ?? 'reading']
+    let baseline = candidates.reduce((best, b) =>
+      b.firstSeenAt < best.firstSeenAt || (b.firstSeenAt === best.firstSeenAt && rank(b) < rank(best)) ? b : best
+    )
+    if (baseline.source === 'estimate') {
+      // Usage only grows during a window, so the start of today is at most any real reading today.
+      const lowestReal = Math.min(...candidates.filter((b) => b.source !== 'estimate').map((b) => b.usedAtStart))
+      if (lowestReal < baseline.usedAtStart) baseline = { ...baseline, usedAtStart: lowestReal }
+    }
     baselines[w.key] = baseline
     const pace = computePace({ usedAtStart: baseline.usedAtStart, usedNow: w.usedPercent, resetsAt: w.resetsAt, now })
     return {
@@ -207,6 +368,7 @@ export function buildRows(
       usedNow: w.usedPercent,
       usedAtStart: baseline.usedAtStart,
       baselineSince: baseline.firstSeenAt,
+      baselineSource: baseline.source ?? 'reading',
       resetsAt: w.resetsAt,
       resetDescription: w.resetDescription,
       ...pace

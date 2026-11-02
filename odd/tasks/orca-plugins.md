@@ -36,3 +36,5 @@ Objective: personal Orca plugins in their own repo, installed from dotfiles. Bra
 - L3: Shortcut source of truth for now is the overrides JSON applied on 2026-11-02 (copy at `~/.config/orca/keybindings-fran.json`); T3 moves it into dotfiles.
 - L4 (2026-11-02, user): "podriamos hacer un plugin de familiard xD"
 - L-theme (2026-11-02, user): "pues hazlo todo!!!!" (Tokyo Night app theme so Orca looks like the terminal).
+- L-quota (2026-11-02, user): "pero tienes acceso a lo consumido en el dia! usalo porque hoy si se ha consumido..." and "a pero esque orca tambien guarda historial! usa estadisticas y uso de orca en el plugin!!!". quota-pace 0.2.0: start of today from claudeops history (exact, Claude) or Orca daily token stats without cache reads (estimate, Claude/Fable/Codex), capped by real readings. Live: Claude start 48, used today 13, 2.0 left of 15.0. Tests 42+ pass (3 files), validate ok.
+- L-familiar (2026-11-02, user): "familiar se ve super pixelado xD mejor por ahora no subimos el de familiar". Not published.

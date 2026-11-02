@@ -50,6 +50,22 @@ export function setup(ctx: PanelContext): void {
   void plugin.request('pace.get').then((answer) => set(snapshot, answer))
 }
 
+/** Where today's starting point comes from, so the numbers can be trusted at the right level. */
+export function baselineNote(row: PaceRow): string {
+  const start = `${Math.round(row.usedAtStart)}% used`
+  if (row.baselineSource === 'history') {
+    return isAfterMidnight(row.baselineSince)
+      ? `Counting from claudeops' first reading today (${clock(row.baselineSince)}, ${start}).`
+      : `Start of today from claudeops: ${start}.`
+  }
+  if (row.baselineSource === 'estimate') {
+    return `Start of today estimated from Orca's token statistics: about ${start}.`
+  }
+  return isAfterMidnight(row.baselineSince)
+    ? `Counting from the first reading today (${clock(row.baselineSince)}, ${start}).`
+    : `Start of today: ${start}.`
+}
+
 function WindowCard({ row }: { row: PaceRow }) {
   const ratio = row.allowanceToday > 0 ? (row.usedToday / row.allowanceToday) * 100 : row.usedToday > 0 ? 100 : 0
   const days = row.daysLeft.toFixed(1)
@@ -72,11 +88,7 @@ function WindowCard({ row }: { row: PaceRow }) {
             row.resetDescription ?? clock(row.resetsAt)
           } (in ${days} days)`}
         </Text>
-        {isAfterMidnight(row.baselineSince) ? (
-          <Text muted size="xs">
-            {`Counting from the first reading today (${clock(row.baselineSince)}, ${Math.round(row.usedAtStart)}% used).`}
-          </Text>
-        ) : null}
+        <Text muted size="xs">{baselineNote(row)}</Text>
       </Stack>
     </Card>
   )

@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "quota-pace",
   "name": "Quota Pace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Spreads what is left of each weekly AI-agent quota over the days until it resets: today's allowance and how much of it is left.",
   "engines": {
     "orca": ">=1.4.246"

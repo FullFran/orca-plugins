@@ -171,3 +171,45 @@ test('output that is not JSON is an error, not a crash', async () => {
   assert.match(snapshot.error ?? '', /JSON/)
   await worker.deactivate()
 })
+
+test('uses claudeops history and Orca daily statistics when they are there', async () => {
+  const f = fake()
+  const reads: string[] = []
+  const today = `${new Date(NOW).getFullYear()}-11-02`
+  f.deps.readJson = async (file: string) => {
+    reads.push(file)
+    if (file.endsWith('/.claudeops/snapshot-cache.json')) {
+      return { history: { windows: { '7d': [{ at: new Date(NOW - 3_600_000).toISOString(), utilization: 50 }] } } }
+    }
+    if (file.endsWith('/orca-codex-usage.json')) {
+      return {
+        dailyAggregates: [
+          { day: '2026-11-01', inputTokens: 300, cachedInputTokens: 0, outputTokens: 0 },
+          { day: today, inputTokens: 100, cachedInputTokens: 0, outputTokens: 0 }
+        ]
+      }
+    }
+    throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+  }
+  const worker = await mountWorker(createWorker(f.deps), { host: mockHost() })
+  const snap = (await worker.request('pace.get')) as PaceSnapshot
+  const claude = row(snap, 'claude.weekly')
+  assert.equal(claude.baselineSource, 'history')
+  assert.equal(claude.usedAtStart, 50)
+  // Codex is at 37% in the fixture; a quarter of this week's Codex tokens were spent today.
+  const codex = row(snap, 'codex.weekly')
+  assert.equal(codex.baselineSource, 'estimate')
+  assert.ok(codex.usedToday > 0)
+  assert.ok(reads.some((file) => file.endsWith('/orca-claude-usage.json')))
+})
+
+test('missing history files leave the plugin on its own readings', async () => {
+  const f = fake()
+  f.deps.readJson = async () => {
+    throw new Error('ENOENT')
+  }
+  const worker = await mountWorker(createWorker(f.deps), { host: mockHost() })
+  const snap = (await worker.request('pace.get')) as PaceSnapshot
+  assert.equal(snap.error, null)
+  assert.equal(row(snap, 'claude.weekly').baselineSource, 'reading')
+})
