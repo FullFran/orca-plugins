@@ -7,6 +7,7 @@ import {
   EmptyState,
   Heading,
   IconButton,
+  Link,
   plugin,
   Progress,
   read,
@@ -15,6 +16,7 @@ import {
   Spinner,
   Stack,
   Text,
+  update,
   type PanelContext
 } from 'orca'
 import type { PaceRow, PaceSnapshot } from './pace'
@@ -22,6 +24,20 @@ import type { PaceRow, PaceSnapshot } from './pace'
 /** What the worker last answered; null until it does. */
 const snapshot = atom<PaceSnapshot | null>(null)
 const busy = atom(false)
+
+/** Keys of quota windows the user chose to hide; persisted in plugin storage under 'hidden'. */
+export const hiddenKeys = atom<string[]>('hidden', [], { persist: 'storage' })
+
+export function hideRow(key: string): void {
+  update(hiddenKeys, (prev) => {
+    const list = Array.isArray(prev) ? prev : []
+    return list.includes(key) ? list : [...list, key]
+  })
+}
+
+export function unhideAll(): void {
+  set(hiddenKeys, [])
+}
 
 function pct(value: number): string {
   return `${value.toFixed(1)}%`
@@ -126,24 +142,34 @@ function WindowCard({ row }: { row: PaceRow }) {
   return (
     <Card title={row.label}>
       <Stack gap="xs">
-        {row.overBudget ? (
-          <Stack gap="none">
-            <Text tone="warning" weight="semibold">
-              {`Today's share is spent; ${pct(-row.remainingToday)} over`}
+        <Row justify="between" align="start">
+          {row.overBudget ? (
+            <Stack gap="none">
+              <Text tone="warning" weight="semibold">
+                {`Today's share is spent; ${pct(-row.remainingToday)} over`}
+              </Text>
+              <Text size="xs" muted>
+                {`Sustainable from now: ${pct(live)} of your week`}
+              </Text>
+            </Stack>
+          ) : row.remainingTodayAdaptive != null ? (
+            <Text weight="semibold">
+              {`${pct(row.remainingTodayAdaptive)} today, based on your usual hours`}
             </Text>
-            <Text size="xs" muted>
-              {`Sustainable from now: ${pct(live)} of your week`}
+          ) : (
+            <Text weight="semibold">
+              {`You can spend ${pct(live)} of your week today`}
             </Text>
-          </Stack>
-        ) : row.remainingTodayAdaptive != null ? (
-          <Text weight="semibold">
-            {`${pct(row.remainingTodayAdaptive)} today, based on your usual hours`}
-          </Text>
-        ) : (
-          <Text weight="semibold">
-            {`You can spend ${pct(live)} of your week today`}
-          </Text>
-        )}
+          )}
+
+          <IconButton
+            icon="close"
+            label="Hide"
+            variant="ghost"
+            size="xs"
+            onPress={() => hideRow(row.key)}
+          />
+        </Row>
 
         <Text tone={status.tone} muted={status.muted} size="xs">
           {status.text}
@@ -198,6 +224,9 @@ function Issues({ snap }: { snap: PaceSnapshot }) {
 
 export default function Panel() {
   const snap = read(snapshot)
+  const hidden = read(hiddenKeys)
+  const safeHidden = Array.isArray(hidden) ? hidden : []
+
   return (
     <Stack gap="md">
       <Row justify="between">
@@ -211,7 +240,21 @@ export default function Panel() {
           {snap.rows.length === 0 ? (
             <EmptyState title="No weekly quotas" description={snap.error ?? 'No provider reported a weekly window.'} />
           ) : (
-            snap.rows.map((row) => <WindowCard key={row.key} row={row} />)
+            <>
+              {snap.rows
+                .filter((row) => !safeHidden.includes(row.key))
+                .map((row) => (
+                  <WindowCard key={row.key} row={row} />
+                ))}
+              {snap.rows.filter((row) => safeHidden.includes(row.key)).length > 0 ? (
+                <Row gap="xs" align="center">
+                  <Text muted size="xs">
+                    {`${snap.rows.filter((row) => safeHidden.includes(row.key)).length} hidden · `}
+                    <Link onPress={unhideAll}>Show</Link>
+                  </Text>
+                </Row>
+              ) : null}
+            </>
           )}
           {snap.error && snap.rows.length > 0 ? (
             <Text tone="warning" size="xs">{`Last read failed: ${snap.error}`}</Text>

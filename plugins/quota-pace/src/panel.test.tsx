@@ -385,3 +385,73 @@ test('rule 5: details collapsed by default and expandable', async () => {
 
   await view.unmount()
 })
+
+test('hide persists: hiding card writes to storage and survives restart', async () => {
+  const host = mockHost({ requests: { 'pace.get': () => snapshot() } })
+  const view = await mount(panel, { host })
+  assert.ok(view.find({ label: 'Claude' }))
+  await view.press({ label: 'Hide' })
+  assert.equal(view.find({ label: 'Claude' }), null)
+  assert.deepEqual(view.persisted.storage['hidden'], ['claude.weekly'])
+  await view.unmount()
+
+  // Restart panel with persisted storage
+  const host2 = mockHost({
+    storage: { hidden: ['claude.weekly'] },
+    requests: { 'pace.get': () => snapshot() }
+  })
+  const view2 = await mount(panel, { host: host2 })
+  assert.equal(view2.find({ label: 'Claude' }), null)
+  assert.match(texts(view2), /1 hidden · Show/)
+  await view2.unmount()
+})
+
+test('footer count: increments as cards are hidden', async () => {
+  const snap = snapshot({
+    rows: [
+      paceRow({ key: 'claude.weekly', label: 'Claude' }),
+      paceRow({ key: 'codex.weekly', label: 'Codex' })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+  assert.doesNotMatch(texts(view), /hidden · Show/)
+
+  // Hide first card
+  assert.equal(view.findAll({ label: 'Hide' }).length, 2)
+  await view.press({ label: 'Hide' })
+  assert.match(texts(view), /1 hidden · Show/)
+
+  // Wait for storage cycle
+  await new Promise((r) => setTimeout(r, 10))
+
+  // Hide second card
+  assert.equal(view.findAll({ label: 'Hide' }).length, 1)
+  await view.press({ label: 'Hide' })
+  assert.match(texts(view), /2 hidden · Show/)
+  await view.unmount()
+})
+
+test('unhide restores: clicking Show clears hidden keys and restores cards', async () => {
+  const snap = snapshot({
+    rows: [
+      paceRow({ key: 'claude.weekly', label: 'Claude' }),
+      paceRow({ key: 'codex.weekly', label: 'Codex' })
+    ]
+  })
+  const host = mockHost({
+    storage: { hidden: ['claude.weekly', 'codex.weekly'] },
+    requests: { 'pace.get': () => snap }
+  })
+  const view = await mount(panel, { host })
+  assert.equal(view.find({ label: 'Claude' }), null)
+  assert.equal(view.find({ label: 'Codex' }), null)
+  assert.match(texts(view), /2 hidden · Show/)
+
+  // Click Show
+  await view.press({ text: 'Show' })
+  assert.ok(view.find({ label: 'Claude' }))
+  assert.ok(view.find({ label: 'Codex' }))
+  assert.doesNotMatch(texts(view), /hidden · Show/)
+  assert.deepEqual(view.persisted.storage['hidden'], [])
+  await view.unmount()
+})

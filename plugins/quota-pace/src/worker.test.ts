@@ -261,3 +261,15 @@ test('worker loads quota-pace-profile.json and calculates adaptive allowance', a
   assert.equal(claude.profileNote, null)
   await worker.deactivate()
 })
+
+test('hidden window still sampled by worker', async () => {
+  const f = fake()
+  const host = mockHost({ storage: { hidden: ['claude.fableWeekly'] } })
+  const worker = await mountWorker(createWorker(f.deps), { host })
+
+  const snapshot = (await worker.request('pace.get')) as PaceSnapshot
+  assert.ok(snapshot.rows.find((r) => r.key === 'claude.fableWeekly'))
+  const samples = host.data().storage.samples as Record<string, unknown[]>
+  assert.ok(Array.isArray(samples['claude.fableWeekly']))
+  await worker.deactivate()
+})

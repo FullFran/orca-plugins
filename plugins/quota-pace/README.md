@@ -31,6 +31,7 @@ All numbers are percent of the weekly quota (% of the week); rates are expressed
    - `Week used up`: Quota fully exhausted (100% used).
 3. **Week context and progress bar**: A single bar displaying total week usage with today's share marked, followed by reset time and remaining duration (`(in X d Y h)`).
 4. **Details disclosure**: Collapsed by default; click to reveal daily budget set at midnight, today's usage, sustainable and current burn rates (`%/h`), pace multiplier relative to sustainable rate (`1.6× the sustainable rate`), baseline source note, and profile history days.
+5. **Hiding & restoring cards**: Each card has a small hide button (`×`). Hidden cards are stored under `hidden` in plugin storage and persist across restarts. A footer line (`N hidden · Show`) indicates hidden cards; clicking `Show` restores all cards. Hiding is presentation only: the background worker continues sampling all windows so history is preserved if restored.
 
 ## What it shows
 
@@ -150,13 +151,13 @@ dailyDeviation  = usedToday - allowanceToday
 
 ## Storage & Backward Compatibility
 
-- `storage:own`: stores daily baselines (`baselines`) and recent sample history (`samples`).
+- `storage:own`: stores daily baselines (`baselines`), recent sample history (`samples`), and hidden card keys (`hidden`).
 - Samples cap: raised from 200 to 2500 samples (`SAMPLES_CAP`), ensuring a full week of 5-minute polling ($\ge 2016$ samples) is stored to cover the weekly burn window while keeping storage bounded.
-- Fully backward-compatible with 0.2.0 and 0.3.0 stored data; previous fields retain their exact meaning.
+- Fully backward-compatible with 0.2.0, 0.3.0 and 0.4.0 stored data; previous fields retain their exact meaning.
 
 ## Develop & Test
 
 ```sh
-orca-ide plugin test plugins/quota-pace --json   # 85 tests covering all spec rules
+orca-ide plugin test plugins/quota-pace --json   # 89 tests covering all spec rules
 orca-ide plugin check plugins/quota-pace --json  # renders panel scenarios
 ```
