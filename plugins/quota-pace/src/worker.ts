@@ -13,6 +13,8 @@ import {
   extractWeeklyWindows,
   parseClaudeopsHistory,
   parseOrcaDailyUsage,
+  validateProfile,
+  type ActivityProfile,
   type Baseline,
   type DailyUsage,
   type PaceSnapshot,
@@ -55,21 +57,30 @@ async function tryRead(deps: WorkerDeps, file: string): Promise<unknown> {
  * Usage recorded before this plugin ran: claudeops' log of Claude's weekly utilization, and Orca's
  * daily token statistics for Claude (all models, and Fable alone) and Codex. All optional.
  */
-async function readUsageSources(deps: WorkerDeps): Promise<{ history: UsageHistory; daily: DailyUsage }> {
+async function readUsageSources(deps: WorkerDeps): Promise<{
+  history: UsageHistory
+  daily: DailyUsage
+  profile: ActivityProfile | null
+  profileNote: string | null
+}> {
   const home = os.homedir()
   const data = orcaDataDir(home)
-  const [claudeops, claude, codex] = await Promise.all([
+  const [claudeops, claude, codex, profileRaw] = await Promise.all([
     tryRead(deps, path.join(home, '.claudeops', 'snapshot-cache.json')),
     tryRead(deps, path.join(data, 'orca-claude-usage.json')),
-    tryRead(deps, path.join(data, 'orca-codex-usage.json'))
+    tryRead(deps, path.join(data, 'orca-codex-usage.json')),
+    tryRead(deps, path.join(data, 'quota-pace-profile.json'))
   ])
+  const { profile, note: profileNote } = validateProfile(profileRaw)
   return {
     history: parseClaudeopsHistory(claudeops),
     daily: {
       'claude.weekly': parseOrcaDailyUsage(claude),
       'claude.fableWeekly': parseOrcaDailyUsage(claude, 'fable'),
       'codex.weekly': parseOrcaDailyUsage(codex)
-    }
+    },
+    profile,
+    profileNote
   }
 }
 
@@ -158,12 +169,20 @@ export function createWorker(deps: WorkerDeps) {
     let snapshot: PaceSnapshot
     try {
       const { windows, issues } = extractWeeklyWindows(parseRateLimits(await deps.run()))
-      const { history, daily } = await readUsageSources(deps)
+      const { history, daily, profile, profileNote } = await readUsageSources(deps)
       const [baselinesStore, samplesStore] = await Promise.all([
         storedBaselines(orca),
         storedSamples(orca)
       ])
-      const { rows, baselines, samples } = buildRows(windows, baselinesStore, now, history, daily, samplesStore)
+      const { rows, baselines, samples } = buildRows(
+        windows,
+        baselinesStore,
+        now,
+        history,
+        daily,
+        samplesStore,
+        { profile, profileNote }
+      )
       await Promise.all([
         orca.storage.set(BASELINES, baselines),
         orca.storage.set(SAMPLES, samples)

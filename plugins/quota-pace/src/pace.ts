@@ -4,6 +4,8 @@ export const HOUR_MS = 3_600_000
 export const DAY_MS = 86_400_000
 export const WEEK_MS = 7 * DAY_MS
 export const WEEK_MINUTES = 10_080
+export const MIN_PROFILE_DAYS = 14
+export const SAMPLES_CAP = 2500
 /** resetsAt moves by a few ms between readings; a bigger move means a new window. */
 export const RESET_JITTER_MS = 60 * 60_000
 
@@ -69,6 +71,9 @@ export interface PaceLive {
   reservePercent: number
   dailyBudget: number
   dailyDeviation: number
+  remainingTodayAdaptive?: number | null
+  profileDays?: number | null
+  profileNote?: string | null
 }
 
 export interface Pace {
@@ -206,12 +211,150 @@ export function nextBaseline(previous: Baseline | undefined, window: WeeklyWindo
   return { date, usedAtStart: window.usedPercent, resetsAt: window.resetsAt, firstSeenAt: now, source: 'reading' }
 }
 
+export interface ActivityProfile {
+  version: 1
+  generatedAt?: string
+  timezone: string
+  from?: string
+  to?: string
+  days: number
+  weights: number[]
+}
+
+export interface ProfileValidationResult {
+  profile: ActivityProfile | null
+  note: string | null
+}
+
+export function validateProfile(raw: unknown): ProfileValidationResult {
+  if (raw === null || raw === undefined) {
+    return { profile: null, note: 'profile: none (uniform)' }
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { profile: null, note: 'profile ignored: not an object' }
+  }
+  const obj = raw as Record<string, unknown>
+  if (obj.version !== 1) {
+    return { profile: null, note: `profile ignored: unsupported version ${String(obj.version)}` }
+  }
+  if (typeof obj.days !== 'number' || !Number.isFinite(obj.days)) {
+    return { profile: null, note: 'profile ignored: days must be finite' }
+  }
+  if (!Array.isArray(obj.weights) || obj.weights.length !== 168) {
+    const len = Array.isArray(obj.weights) ? obj.weights.length : typeof obj.weights
+    return { profile: null, note: `profile ignored: expected 168 weights, got ${len}` }
+  }
+  let sum = 0
+  for (let i = 0; i < 168; i++) {
+    const w = obj.weights[i]
+    if (typeof w !== 'number' || !Number.isFinite(w) || w < 0) {
+      return { profile: null, note: 'profile ignored: weights must be non-negative finite numbers' }
+    }
+    sum += w
+  }
+  if (sum <= 0) {
+    return { profile: null, note: 'profile ignored: sum of weights must be positive' }
+  }
+  if (typeof obj.timezone !== 'string' || !obj.timezone) {
+    return { profile: null, note: 'profile ignored: missing timezone' }
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: obj.timezone })
+  } catch {
+    return { profile: null, note: `profile ignored: invalid timezone "${obj.timezone}"` }
+  }
+  if (obj.days < MIN_PROFILE_DAYS) {
+    return { profile: null, note: `profile has ${obj.days} days, needs 14` }
+  }
+  return {
+    profile: {
+      version: 1,
+      generatedAt: typeof obj.generatedAt === 'string' ? obj.generatedAt : undefined,
+      timezone: obj.timezone,
+      from: typeof obj.from === 'string' ? obj.from : undefined,
+      to: typeof obj.to === 'string' ? obj.to : undefined,
+      days: obj.days,
+      weights: obj.weights as number[]
+    },
+    note: null
+  }
+}
+
+const WEEKDAY_MAP: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6
+}
+
+export function createProfileIntegrator(timeZone: string, weights: number[]): (t1: number, t2: number) => number {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hourCycle: 'h23',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric'
+  })
+
+  function getInfo(ms: number) {
+    const d = new Date(ms)
+    const parts = fmt.formatToParts(d)
+    let weekday = ''
+    let hour = 0
+    let minute = 0
+    let second = 0
+    for (const p of parts) {
+      if (p.type === 'weekday') weekday = p.value
+      else if (p.type === 'hour') hour = parseInt(p.value, 10) % 24
+      else if (p.type === 'minute') minute = parseInt(p.value, 10)
+      else if (p.type === 'second') second = parseInt(p.value, 10)
+    }
+    const day = WEEKDAY_MAP[weekday] ?? 0
+    const millisecond = d.getUTCMilliseconds()
+    const elapsedInHour = Math.max(0, Math.min(HOUR_MS - 1, (minute * 60 + second) * 1000 + millisecond))
+    return { day, hour, elapsedInHour }
+  }
+
+  return function integrate(t1: number, t2: number): number {
+    if (t2 <= t1) return 0
+    let cur = t1
+    let sum = 0
+    while (cur < t2) {
+      const { elapsedInHour } = getInfo(cur)
+      const remainingInHour = HOUR_MS - elapsedInHour
+      const nextBoundary = cur + (remainingInHour > 0 ? remainingInHour : HOUR_MS)
+      const stepEnd = Math.min(t2, nextBoundary)
+      const duration = stepEnd - cur
+      const mid = cur + Math.floor(duration / 2)
+      const { day, hour } = getInfo(mid)
+      const idx = day * 24 + hour
+      const w = weights[idx] ?? 1
+      sum += w * duration
+      cur = stepEnd
+    }
+    return sum
+  }
+}
+
+export function createAdaptiveBudgetStrategy(profile: ActivityProfile): BudgetStrategy {
+  const integrate = createProfileIntegrator(profile.timezone, profile.weights)
+  return {
+    name: 'adaptive',
+    weight: (t1: number, t2: number) => integrate(t1, t2)
+  }
+}
+
 export interface SustainableBudgetInput {
   remainingWeekly: number
   now: number
   resetsAt: number
   nextMidnight?: number
   reserveFraction?: number
+  strategy?: BudgetStrategy
 }
 
 export interface SustainableBudgetResult {
@@ -221,6 +364,7 @@ export interface SustainableBudgetResult {
   hoursUntilReset: number
   daysUntilReset: number
   reservePercent: number
+  remainingTodayAdaptive?: number | null
 }
 
 /**
@@ -228,7 +372,7 @@ export interface SustainableBudgetResult {
  * B_hoy = R * (1 - s) * max(0, min(m, T) - t) / (T - t), where T > t.
  */
 export function computeSustainableBudget(input: SustainableBudgetInput): SustainableBudgetResult {
-  const { remainingWeekly, now, resetsAt, reserveFraction = 0 } = input
+  const { remainingWeekly, now, resetsAt, reserveFraction = 0, strategy } = input
   const s = Math.max(0, Math.min(1, Number.isFinite(reserveFraction) ? reserveFraction : 0))
   const R = Math.max(0, Math.min(100, Number.isFinite(remainingWeekly) ? remainingWeekly : 0))
   const t = now
@@ -246,14 +390,31 @@ export function computeSustainableBudget(input: SustainableBudgetInput): Sustain
       sustainablePerHour: 0,
       hoursUntilReset: 0,
       daysUntilReset: 0,
-      reservePercent
+      reservePercent,
+      remainingTodayAdaptive: strategy?.name === 'adaptive' ? 0 : null
     }
   }
 
   const effectiveSpanUntilMidnight = Math.max(0, Math.min(m, T) - t)
   const totalSpanUntilReset = T - t
-  const remainingTodayLive = R * (1 - s) * (effectiveSpanUntilMidnight / totalSpanUntilReset)
+  const remainingTodayLive = totalSpanUntilReset > 0 ? R * (1 - s) * (effectiveSpanUntilMidnight / totalSpanUntilReset) : 0
   const sustainablePerHour = hoursUntilReset > 0 ? (R * (1 - s)) / hoursUntilReset : 0
+
+  let remainingTodayAdaptive: number | null = null
+  if (strategy && strategy.name === 'adaptive') {
+    if (m <= t) {
+      remainingTodayAdaptive = 0
+    } else {
+      const b = Math.min(m, T)
+      const numerator = strategy.weight(t, b)
+      const denominator = strategy.weight(t, T)
+      if (denominator > 0) {
+        remainingTodayAdaptive = R * (1 - s) * (numerator / denominator)
+      } else {
+        remainingTodayAdaptive = 0
+      }
+    }
+  }
 
   return {
     remainingWeekly: R,
@@ -261,8 +422,16 @@ export function computeSustainableBudget(input: SustainableBudgetInput): Sustain
     sustainablePerHour,
     hoursUntilReset,
     daysUntilReset,
-    reservePercent
+    reservePercent,
+    remainingTodayAdaptive
   }
+}
+
+export function computeAdaptiveBudget(
+  input: SustainableBudgetInput & { profile: ActivityProfile }
+): SustainableBudgetResult {
+  const strategy = createAdaptiveBudgetStrategy(input.profile)
+  return computeSustainableBudget({ ...input, strategy })
 }
 
 /** Interface for activity-weighted budgeting strategies (Section 4). */
@@ -601,7 +770,11 @@ export function buildRows(
   history: UsageHistory = {},
   daily: DailyUsage = {},
   samplesMap: Record<string, UsageSample[]> = {},
-  options: { reserveFraction?: number } = {}
+  options: {
+    reserveFraction?: number
+    profile?: ActivityProfile | null
+    profileNote?: string | null
+  } = {}
 ): {
   rows: PaceRow[]
   baselines: Record<string, Baseline>
@@ -609,6 +782,7 @@ export function buildRows(
 } {
   const baselines: Record<string, Baseline> = {}
   const nextSamples: Record<string, UsageSample[]> = { ...samplesMap }
+  const adaptiveStrategy = options.profile ? createAdaptiveBudgetStrategy(options.profile) : undefined
 
   const rows = windows.map((w) => {
     const candidates = [
@@ -641,14 +815,15 @@ export function buildRows(
       .filter((s) => s.at >= cycleStart && s.at <= now && Number.isFinite(s.at) && Number.isFinite(s.used))
       .sort((a, b) => a.at - b.at)
 
-    nextSamples[w.key] = cleanSamples.slice(-200)
+    nextSamples[w.key] = cleanSamples.slice(-SAMPLES_CAP)
 
     const pace = computePace({ usedAtStart: baseline.usedAtStart, usedNow: w.usedPercent, resetsAt: w.resetsAt, now })
     const sustainable = computeSustainableBudget({
       remainingWeekly: pace.remainingWeekly,
       now,
       resetsAt: w.resetsAt,
-      reserveFraction: options.reserveFraction ?? 0
+      reserveFraction: options.reserveFraction ?? 0,
+      strategy: adaptiveStrategy
     })
 
     const forecast = computeBurnRate({
@@ -677,7 +852,10 @@ export function buildRows(
       reservePercent: sustainable.reservePercent,
       dailyBudget: pace.allowanceToday,
       dailyDeviation: pace.usedToday - pace.allowanceToday,
-      ...forecast
+      ...forecast,
+      remainingTodayAdaptive: sustainable.remainingTodayAdaptive ?? null,
+      profileDays: options.profile?.days ?? null,
+      profileNote: options.profileNote ?? null
     }
   })
 

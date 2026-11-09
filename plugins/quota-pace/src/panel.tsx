@@ -84,6 +84,12 @@ export function forecastNote(row: PaceRow): string {
   return 'Forecast: estimated from recent usage slope.'
 }
 
+/** Explains the profile status when uniform fallback is in effect. */
+export function profileNote(row: PaceRow): string | null {
+  if (row.remainingTodayAdaptive != null) return null
+  return row.profileNote ?? null
+}
+
 function PacePill({ row }: { row: PaceRow }) {
   if (row.forecastStatus === 'insufficient_data') {
     return <Text muted size="xs">Pace: learning (insufficient data)</Text>
@@ -138,6 +144,11 @@ function WindowCard({ row }: { row: PaceRow }) {
         <Text size="xs">
           {`Live allowance: ${pp(live)} · Sustainable: ${sustainable.toFixed(2)} pp/h`}
         </Text>
+        {row.remainingTodayAdaptive != null ? (
+          <Text size="xs">
+            {`Live allowance (adaptive): ${pp(row.remainingTodayAdaptive)} (estimated, ${row.profileDays ?? 0}d profile)`}
+          </Text>
+        ) : null}
         <PacePill row={row} />
         {row.estimatedExhaustionAt != null ? (
           <Text tone="warning" size="xs">
@@ -151,6 +162,7 @@ function WindowCard({ row }: { row: PaceRow }) {
         </Text>
         <Text muted size="xs">{baselineNote(row)}</Text>
         <Text muted size="xs">{forecastNote(row)}</Text>
+        {profileNote(row) ? <Text muted size="xs">{profileNote(row)}</Text> : null}
       </Stack>
     </Card>
   )
