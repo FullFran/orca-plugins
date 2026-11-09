@@ -56,12 +56,12 @@ test('shows what is left for today, the weekly rest and the reset', async () => 
   const view = await mount(panel, { host })
   assert.ok(view.find({ label: 'Claude' }))
   const all = texts(view)
-  assert.match(all, /6\.0% left today of 16\.0%/)
-  assert.match(all, /30% of the week left/)
-  assert.match(all, /resets jue, 12:00/)
-  assert.match(all, /in 2\.5 days/)
+  assert.match(all, /You can spend 4\.8% of your week today/)
+  assert.match(all, /On track/)
+  assert.match(all, /Week: 70% used · resets jue, 12:00 \(in 2 d 12 h\)/)
   const bar = view.find({ type: 'Progress' })
-  assert.equal(bar?.props?.value, 62.5)
+  assert.equal(bar?.props?.value, 70)
+  assert.equal(bar?.props?.label, 'Week used: 70% (today: 10.0%)')
   assert.deepEqual(view.errors, [])
   assert.deepEqual(view.refusals, [])
   await view.unmount()
@@ -69,19 +69,21 @@ test('shows what is left for today, the weekly rest and the reset', async () => 
 
 test('over budget shows by how much in the warning tone', async () => {
   const over = snapshot({
-    rows: [paceRow({ usedNow: 80, usedToday: 20, remainingToday: -4, overBudget: true })]
+    rows: [paceRow({ usedNow: 80, usedToday: 20, remainingToday: -4, overBudget: true, remainingTodayLive: 2.0 })]
   })
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => over } }) })
-  const warning = view.find({ type: 'Text', text: /4\.0% over today's 16\.0%/ })
+  const warning = view.find({ type: 'Text', text: /Today's share is spent; 4\.0% over/ })
   assert.ok(warning)
   assert.equal(warning.props?.tone, 'warning')
-  assert.equal(view.find({ type: 'Progress' })?.props?.value, 100)
+  assert.match(texts(view), /Sustainable from now: 2\.0% of your week/)
+  assert.equal(view.find({ type: 'Progress' })?.props?.value, 80)
   await view.unmount()
 })
 
 test('says when the baseline is the first reading after midnight', async () => {
   const late = snapshot({ rows: [paceRow({ baselineSince: MIDNIGHT + 9 * 3_600_000 })] })
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => late } }) })
+  await view.toggle({ type: 'Collapsible' })
   assert.match(texts(view), /Counting from the first reading today/)
   await view.unmount()
 })
@@ -92,9 +94,9 @@ test('refresh asks the worker again and shows the new numbers', async () => {
     requests: { 'pace.get': () => current, 'pace.refresh': () => current }
   })
   const view = await mount(panel, { host })
-  current = snapshot({ rows: [paceRow({ remainingToday: 2, usedToday: 14, usedNow: 74 })] })
+  current = snapshot({ rows: [paceRow({ remainingToday: 2, remainingTodayLive: 2, usedToday: 14, usedNow: 74 })] })
   await view.press({ label: 'Refresh' })
-  assert.match(texts(view), /2\.0% left today/)
+  assert.match(texts(view), /You can spend 2\.0% of your week today/)
   await view.unmount()
 })
 
@@ -137,6 +139,10 @@ test('says where the start of today comes from', async () => {
     ]
   })
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => both } }) })
+  const collapsibles = view.findAll({ type: 'Collapsible' })
+  for (const c of collapsibles) {
+    await view.toggle(c)
+  }
   assert.match(texts(view), /Start of today from claudeops/)
   assert.match(texts(view), /estimated from Orca's token statistics/)
   await view.unmount()
@@ -155,9 +161,13 @@ test('shows live allowance, sustainable pace and burn rate status', async () => 
     ]
   })
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+  assert.match(texts(view), /You can spend 4\.8% of your week today/)
+  assert.match(texts(view), /On track/)
+  await view.toggle({ type: 'Collapsible' })
   const all = texts(view)
-  assert.match(all, /Live allowance: 4\.8 pp · Sustainable: 0\.50 pp\/h/)
-  assert.match(all, /Current pace: 0\.35 pp\/h \(0\.7x pace\)/)
+  assert.match(all, /Sustainable rate: 0\.50 %\/h/)
+  assert.match(all, /Current rate: 0\.35 %\/h/)
+  assert.match(all, /Pace multiplier: 0\.7× the sustainable rate/)
   await view.unmount()
 })
 
@@ -174,8 +184,9 @@ test('shows warning when pace is unsustainable and projected exhaustion is befor
   })
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
   const all = texts(view)
-  assert.match(all, /unsustainable/)
-  assert.match(all, /Projected exhaustion:/)
+  assert.match(all, /Faster than sustainable — at this rate the week runs out/)
+  const warning = view.find({ type: 'Text', text: /Faster than sustainable/ })
+  assert.equal(warning?.props?.tone, 'warning')
   await view.unmount()
 })
 
@@ -191,9 +202,9 @@ test('shows both live allowance and adaptive live allowance when profile is in u
     ]
   })
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
-  const all = texts(view)
-  assert.match(all, /Live allowance: 4\.8 pp · Sustainable: 0\.50 pp\/h/)
-  assert.match(all, /Live allowance \(adaptive\): 5\.2 pp \(estimated, 30d profile\)/)
+  assert.match(texts(view), /5\.2% today, based on your usual hours/)
+  await view.toggle({ type: 'Collapsible' })
+  assert.match(texts(view), /Profile history: 30 days/)
   await view.unmount()
 })
 
@@ -208,8 +219,169 @@ test('shows profile fallback note when uniform fallback is in effect', async () 
     ]
   })
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+  assert.match(texts(view), /You can spend 4\.8% of your week today/)
+  await view.toggle({ type: 'Collapsible' })
+  assert.match(texts(view), /profile has 7 days, needs 14/)
+  await view.unmount()
+})
+
+// Rule-specific tests
+test('rule 1: no "pp" anywhere in rendered output', async () => {
+  const host = mockHost({
+    requests: {
+      'pace.get': () =>
+        snapshot({
+          rows: [
+            paceRow({
+              remainingTodayLive: 4.8,
+              sustainablePerHour: 0.5,
+              remainingTodayAdaptive: 6.1,
+              profileDays: 30,
+              currentBurnRate: 0.35,
+              paceMultiplier: 0.7
+            })
+          ]
+        })
+    }
+  })
+  const view = await mount(panel, { host })
+  await view.toggle({ type: 'Collapsible' })
   const all = texts(view)
-  assert.match(all, /profile has 7 days, needs 14/)
-  assert.doesNotMatch(all, /Live allowance \(adaptive\)/)
+  assert.doesNotMatch(all, /\bpp\b/)
+  assert.doesNotMatch(all, /pp\/h/)
+  await view.unmount()
+})
+
+test('rule 2: headline uses adaptive when present and uniform otherwise', async () => {
+  // Adaptive
+  const adaptiveSnap = snapshot({
+    rows: [paceRow({ remainingTodayAdaptive: 6.1, profileDays: 30 })]
+  })
+  let view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => adaptiveSnap } }) })
+  assert.match(texts(view), /6\.1% today, based on your usual hours/)
+  await view.unmount()
+
+  // Uniform
+  const uniformSnap = snapshot({
+    rows: [paceRow({ remainingTodayAdaptive: null, remainingTodayLive: 4.8 })]
+  })
+  view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => uniformSnap } }) })
+  assert.match(texts(view), /You can spend 4\.8% of your week today/)
+  await view.unmount()
+})
+
+test('rule 2: over-budget headline shows overspend and sustainable amount', async () => {
+  const overSnap = snapshot({
+    rows: [
+      paceRow({
+        overBudget: true,
+        remainingToday: -2.3,
+        remainingTodayLive: 1.5
+      })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => overSnap } }) })
+  const all = texts(view)
+  assert.match(all, /Today's share is spent; 2\.3% over/)
+  assert.match(all, /Sustainable from now: 1\.5% of your week/)
+  const warning = view.find({ type: 'Text', text: /Today's share is spent; 2\.3% over/ })
+  assert.equal(warning?.props?.tone, 'warning')
+  await view.unmount()
+})
+
+test('rule 3: each status line state renders with the correct tone and text', async () => {
+  const cases: {
+    status: PaceRow['forecastStatus']
+    usedNow?: number
+    estimatedExhaustionAt?: number | null
+    pattern: RegExp
+    tone?: string
+    muted?: boolean
+  }[] = [
+    { status: 'normal', pattern: /On track/ },
+    {
+      status: 'unsustainable',
+      estimatedExhaustionAt: new Date(2026, 10, 4, 18, 0).getTime(),
+      pattern: /Faster than sustainable — at this rate the week runs out Wed 18:00/,
+      tone: 'warning'
+    },
+    { status: 'spike', pattern: /Brief spike, trend OK/, tone: 'warning' },
+    { status: 'insufficient_data', pattern: /Learning your pace \(needs a few readings\)/, muted: true },
+    { status: 'stale', pattern: /Readings are stale \(last \d+ min ago\)/, tone: 'warning' },
+    { status: 'exhausted', pattern: /Week used up/, tone: 'warning' }
+  ]
+
+  for (const c of cases) {
+    const snap = snapshot({
+      rows: [
+        paceRow({
+          forecastStatus: c.status,
+          usedNow: c.usedNow ?? 70,
+          estimatedExhaustionAt: c.estimatedExhaustionAt ?? null
+        })
+      ]
+    })
+    const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+    const elem = view.find({ type: 'Text', text: c.pattern })
+    assert.ok(elem, `Expected to find status text matching ${c.pattern}`)
+    if (c.tone) {
+      assert.equal(elem.props?.tone, c.tone)
+    }
+    if (c.muted) {
+      assert.equal(elem.props?.muted, true)
+    }
+    await view.unmount()
+  }
+})
+
+test('rule 4: week line with relative reset time', async () => {
+  const snap = snapshot({
+    rows: [
+      paceRow({
+        usedNow: 66,
+        resetDescription: 'Thu 11:00',
+        hoursUntilReset: 68.65
+      })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+  const all = texts(view)
+  assert.match(all, /Week: 66% used · resets Thu 11:00 \(in 2 d 20 h\)/)
+  const bar = view.find({ type: 'Progress' })
+  assert.equal(bar?.props?.value, 66)
+  assert.match(String(bar?.props?.label), /Week used: 66%/)
+  await view.unmount()
+})
+
+test('rule 5: details collapsed by default and expandable', async () => {
+  const snap = snapshot({
+    rows: [
+      paceRow({
+        allowanceToday: 16,
+        usedToday: 10,
+        sustainablePerHour: 0.5,
+        currentBurnRate: 0.8,
+        paceMultiplier: 1.6,
+        profileDays: 30
+      })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+
+  // Collapsed by default: details elements are not visible
+  assert.equal(view.find({ type: 'Text', text: /Daily budget set at midnight/ }), null)
+  assert.equal(view.find({ type: 'Text', text: /1\.6× the sustainable rate/ }), null)
+
+  // Expand
+  await view.toggle({ type: 'Collapsible' })
+
+  // Now visible
+  assert.ok(view.find({ type: 'Text', text: /Daily budget set at midnight: 16\.0%/ }))
+  assert.ok(view.find({ type: 'Text', text: /Used today: 10\.0%/ }))
+  assert.ok(view.find({ type: 'Text', text: /Sustainable rate: 0\.50 %\/h/ }))
+  assert.ok(view.find({ type: 'Text', text: /Current rate: 0\.80 %\/h/ }))
+  assert.ok(view.find({ type: 'Text', text: /1\.6× the sustainable rate/ }))
+  assert.ok(view.find({ type: 'Text', text: /Profile history: 30 days/ }))
+
   await view.unmount()
 })
