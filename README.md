@@ -5,6 +5,7 @@ Personal [Orca](https://github.com/stablyai/orca) plugins. Installed on each mac
 | Plugin | What it does | Execution |
 |---|---|---|
 | [`fran-shortcuts`](plugins/fran-shortcuts) | Searchable cheat sheet of my Orca shortcuts (tmux-style Ctrl+Shift layer) | `sandboxed-ui`, no capabilities |
+| [`skill-cheatsheet`](plugins/skill-cheatsheet) | Cheat sheet of the Claude Code skills I invoke by hand, read live from `~/.claude` | `trusted-worker`, reads files only |
 
 ## Install (auto-updates)
 
