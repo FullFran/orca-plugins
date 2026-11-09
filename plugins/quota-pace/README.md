@@ -6,26 +6,48 @@ exhaust my quota before the reset?
 
 Read-only: it never changes an account, credentials, or settings.
 
+## Reading the panel
+
+All numbers are percent of the weekly quota (% of the week); rates are expressed in `%/h`.
+
+```text
+┌────────────────────────────────────────────────────────┐
+│ Claude                                                 │
+│ You can spend 4.8% of your week today                  │
+│ On track                                               │
+│ [████████████████████████░░░░░░░░░░] 70% (today: 10.0%)│
+│ Week: 70% used · resets Thu 12:00 (in 2 d 12 h)        │
+│ ▶ Details                                              │
+└────────────────────────────────────────────────────────┘
+```
+
+1. **Headline (Answer first)**: Answers in plain words how much quota you can still spend today sustainably. If an adaptive activity profile is active, it shows the activity-weighted headline (e.g. `6.1% today, based on your usual hours`). When over budget, it warns with `Today's share is spent; X.X% over` and shows what remains sustainable from now.
+2. **Status line**: A single clear verdict with a tone:
+   - `On track`: Sustainable pace within limits.
+   - `Faster than sustainable — at this rate the week runs out <time>`: Proactive warning of projected exhaustion before reset.
+   - `Brief spike, trend OK`: Short-term spike while 4-hour trend remains sustainable.
+   - `Learning your pace (needs a few readings)`: Gathering initial observations.
+   - `Readings are stale (last 52 min ago)`: Telemetry older than 45 minutes.
+   - `Week used up`: Quota fully exhausted (100% used).
+3. **Week context and progress bar**: A single bar displaying total week usage with today's share marked, followed by reset time and remaining duration (`(in X d Y h)`).
+4. **Details disclosure**: Collapsed by default; click to reveal daily budget set at midnight, today's usage, sustainable and current burn rates (`%/h`), pace multiplier relative to sustainable rate (`1.6× the sustainable rate`), baseline source note, and profile history days.
+
 ## What it shows
 
 One card per weekly window Orca reports (`windowMinutes` 10080), such as "Claude",
 "Claude · Fable", "Codex" or "Antigravity":
 
-- **Live allowance today & Sustainable pace**: how much quota can be spent from the current
-  moment until midnight without compromising uniform allocation over the remainder of the week
-  (e.g. `Live allowance: 4.8 pp · Sustainable: 0.50 pp/h`).
-- **Live allowance (adaptive)**: activity-weighted allowance when a historical activity profile is available,
-  weighting remaining quota according to typical hourly habits rather than flat hours
-  (e.g. `Live allowance (adaptive): 5.2 pp (estimated, 30d profile)`).
-- **Current pace & Multiplier**: burn rate over recent usage (in pp/h) and pace multiplier relative
-  to sustainable pace (e.g. `Current pace: 0.82 pp/h (1.64x pace)`). Identifies brief spikes,
-  unsustainable trends, low consumption, and explicit insufficient data / stale states.
-- **Projected exhaustion**: warns proactively when current burn rate would exhaust the quota before
-  the weekly reset.
-- **Daily budget & Progress**: traditional retrospective day share (`X% left today of Y%` or `X% over today's Y%`),
-  usage bar, daily deviation, and remaining days until reset.
-- **Data transparency notes**: explicitly shows whether each baseline and forecast is **measured**
-  (official provider reading, claudeops history) or **estimated** (Orca token statistics, recent usage slope).
+- **Headline allowance**: how much quota can be spent from the current moment until midnight without
+  compromising allocation over the rest of the week (e.g. `You can spend 4.8% of your week today` or
+  `6.1% today, based on your usual hours` when an activity profile is active).
+- **Status & Trend**: one clear status verdict with tone (`On track`, `Faster than sustainable...`,
+  `Brief spike, trend OK`, `Learning your pace...`, `Readings are stale...`, `Week used up`).
+- **Weekly context & bar**: total percentage of the week used, with today's share marked on the bar,
+  reset day/time, and relative countdown.
+- **Details (expandable)**: daily budget anchor set at midnight, used today, sustainable rate `%/h`,
+  current burn rate `%/h`, pace multiplier (`X.X× the sustainable rate`), baseline origin, and profile days.
+- **Data transparency notes**: explicitly shows whether each baseline is **measured** (provider reading,
+  claudeops history) or **estimated** (Orca token statistics).
 
 Providers without a weekly window are listed briefly: errors with Orca's message, and disconnected providers
 in a single muted line.
@@ -44,10 +66,10 @@ hoursUntilReset = max(0, (T - t) / 3,600,000)
 ```
 
 **Worked example:**
-With 34 percentage points remaining ($R = 34$), 68.65 hours until reset, 9.65 hours until midnight,
+With 34% of the week remaining ($R = 34$), 68.65 hours until reset, 9.65 hours until midnight,
 and no reserve ($s = 0$):
-- Sustainable pace: $34 / 68.65 \approx 0.50 \text{ pp/h}$
-- Live allowance today: $34 \times (9.65 / 68.65) \approx 4.8 \text{ pp}$
+- Sustainable pace: $34 / 68.65 \approx 0.50 \text{ \%/h}$
+- Live allowance today: $34 \times (9.65 / 68.65) \approx 4.8\%$ of your week
 
 ### 2. Adaptive Activity-Weighted Allowance (v0.4)
 
@@ -80,7 +102,7 @@ dailyDeviation  = usedToday - allowanceToday
 ### 4. Burn Rate & Exhaustion Engine
 
 - **Short window (30m)**: detects transient consumption spikes.
-- **Sustained window (4h)**: calculates baseline trend slope $\Delta \text{used} / \Delta t$ in pp/h.
+- **Sustained window (4h)**: calculates baseline trend slope $\Delta \text{used} / \Delta t$ in %/h.
 - **Pace multiplier**: $\text{currentBurnRate} / \text{sustainableBurnRate}$.
 - **States**:
   - `insufficient_data`: fewer than 2 readings or span $< 10$ minutes.
@@ -135,6 +157,6 @@ dailyDeviation  = usedToday - allowanceToday
 ## Develop & Test
 
 ```sh
-orca-ide plugin test plugins/quota-pace --json   # 79 tests covering all spec rules
+orca-ide plugin test plugins/quota-pace --json   # 85 tests covering all spec rules
 orca-ide plugin check plugins/quota-pace --json  # renders panel scenarios
 ```
