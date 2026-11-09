@@ -178,3 +178,38 @@ test('shows warning when pace is unsustainable and projected exhaustion is befor
   assert.match(all, /Projected exhaustion:/)
   await view.unmount()
 })
+
+test('shows both live allowance and adaptive live allowance when profile is in use', async () => {
+  const snap = snapshot({
+    rows: [
+      paceRow({
+        remainingTodayLive: 4.8,
+        sustainablePerHour: 0.5,
+        remainingTodayAdaptive: 5.2,
+        profileDays: 30
+      })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+  const all = texts(view)
+  assert.match(all, /Live allowance: 4\.8 pp · Sustainable: 0\.50 pp\/h/)
+  assert.match(all, /Live allowance \(adaptive\): 5\.2 pp \(estimated, 30d profile\)/)
+  await view.unmount()
+})
+
+test('shows profile fallback note when uniform fallback is in effect', async () => {
+  const snap = snapshot({
+    rows: [
+      paceRow({
+        remainingTodayLive: 4.8,
+        remainingTodayAdaptive: null,
+        profileNote: 'profile has 7 days, needs 14'
+      })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+  const all = texts(view)
+  assert.match(all, /profile has 7 days, needs 14/)
+  assert.doesNotMatch(all, /Live allowance \(adaptive\)/)
+  await view.unmount()
+})

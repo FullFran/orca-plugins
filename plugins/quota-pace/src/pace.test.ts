@@ -3,9 +3,12 @@ import { assert, test } from 'orca/testing'
 import {
   baselineFromHistory,
   buildRows,
+  computeAdaptiveBudget,
   computeBurnRate,
   computePace,
   computeSustainableBudget,
+  createAdaptiveBudgetStrategy,
+  createProfileIntegrator,
   estimateBaselineFromDaily,
   parseOrcaDailyUsage,
   parseClaudeopsHistory,
@@ -15,6 +18,10 @@ import {
   nextLocalMidnight,
   startOfLocalDay,
   uniformBudgetStrategy,
+  validateProfile,
+  MIN_PROFILE_DAYS,
+  SAMPLES_CAP,
+  type ActivityProfile,
   type Baseline,
   type UsageSample,
   type WeeklyWindow
@@ -603,4 +610,229 @@ test('rule: burn rate distinguishes spike from sustained unsustainable trend', (
   ]
   const spike = computeBurnRate({ samples: spikeSamples, now, resetsAt, remainingWeekly: 58.5, sustainablePerHour })
   assert.equal(spike.forecastStatus, 'spike')
+})
+
+test('rule: uniform equivalence (all-ones weights == v0.3 uniform result)', () => {
+  const profile: ActivityProfile = {
+    version: 1,
+    timezone: 'Europe/Madrid',
+    days: 30,
+    weights: new Array(168).fill(1)
+  }
+  const now = MIDNIGHT + 10 * 3_600_000
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const uniform = computeSustainableBudget({
+    remainingWeekly: 34,
+    now,
+    resetsAt
+  })
+  const adaptive = computeAdaptiveBudget({
+    remainingWeekly: 34,
+    now,
+    resetsAt,
+    profile
+  })
+  assert.ok(adaptive.remainingTodayAdaptive !== null)
+  assert.ok(Math.abs(adaptive.remainingTodayAdaptive! - uniform.remainingTodayLive) < 1e-9)
+})
+
+test('rule: concentrated weights move budget toward active hours', () => {
+  const weights = new Array(168).fill(0.1)
+  for (let d = 0; d < 7; d++) {
+    for (let h = 9; h < 18; h++) {
+      weights[d * 24 + h] = 3.0
+    }
+  }
+  const profile: ActivityProfile = {
+    version: 1,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid',
+    days: 30,
+    weights
+  }
+  const now = MIDNIGHT + 10 * 3_600_000
+  const resetsAt = MIDNIGHT + 3.5 * DAY
+  const uniform = computeSustainableBudget({ remainingWeekly: 50, now, resetsAt })
+  const adaptive = computeAdaptiveBudget({ remainingWeekly: 50, now, resetsAt, profile })
+
+  assert.ok(adaptive.remainingTodayAdaptive! > uniform.remainingTodayLive)
+})
+
+test('rule: zero-activity tonight gives more budget now', () => {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid'
+  const weightsNightOff = new Array(168).fill(0.05)
+  for (let d = 0; d < 7; d++) {
+    for (let h = 8; h < 20; h++) {
+      weightsNightOff[d * 24 + h] = 2.0
+    }
+  }
+  const profileNightOff: ActivityProfile = {
+    version: 1,
+    timezone: tz,
+    days: 30,
+    weights: weightsNightOff
+  }
+  const now = MIDNIGHT + 10 * 3_600_000
+  const resetsAt = MIDNIGHT + 3.5 * DAY
+  const uniform = computeSustainableBudget({ remainingWeekly: 40, now, resetsAt })
+  const adaptive = computeAdaptiveBudget({ remainingWeekly: 40, now, resetsAt, profile: profileNightOff })
+  assert.ok(adaptive.remainingTodayAdaptive! > uniform.remainingTodayLive)
+})
+
+test('rule: partial-hour integration', () => {
+  const weights = new Array(168).fill(1)
+  weights[10] = 2.0
+  weights[11] = 4.0
+  const integrate = createProfileIntegrator('UTC', weights)
+  const t1 = Date.parse('2026-11-01T10:15:00Z') // Sunday
+  const t2 = Date.parse('2026-11-01T11:45:00Z')
+  const res = integrate(t1, t2)
+  // 10:15..11:00 = 45m * 2.0 = 1.5h
+  // 11:00..11:45 = 45m * 4.0 = 3.0h
+  // Total = 4.5h = 16,200,000 ms
+  assert.equal(res, 16_200_000)
+})
+
+test('rule: reset occurs before midnight with adaptive profile', () => {
+  const weights = new Array(168).fill(2.5)
+  const profile: ActivityProfile = {
+    version: 1,
+    timezone: 'Europe/Madrid',
+    days: 30,
+    weights
+  }
+  const now = MIDNIGHT + 10 * 3_600_000
+  const resetsAt = MIDNIGHT + 15 * 3_600_000 // 15:00 today
+  const adaptive = computeAdaptiveBudget({ remainingWeekly: 40, now, resetsAt, profile })
+  assert.equal(adaptive.remainingTodayAdaptive, 40)
+})
+
+test('rule: daylight saving time transitions (23h and 25h days) in profile integration', () => {
+  const weights = new Array(168).fill(1)
+  const integrate = createProfileIntegrator('Europe/Madrid', weights)
+
+  // Spring DST in Madrid: 2026-03-29 (clocks skip 02:00 -> 03:00, 23 real hours)
+  const springMidnightStart = Date.parse('2026-03-28T23:00:00Z') // 2026-03-29 00:00 Madrid
+  const springMidnightEnd = Date.parse('2026-03-29T22:00:00Z')   // 2026-03-30 00:00 Madrid
+  assert.equal(springMidnightEnd - springMidnightStart, 23 * 3_600_000)
+  assert.equal(integrate(springMidnightStart, springMidnightEnd), 23 * 3_600_000)
+
+  // Fall DST in Madrid: 2026-10-25 (clocks repeat 02:00 -> 03:00, 25 real hours)
+  const fallMidnightStart = Date.parse('2026-10-24T22:00:00Z') // 2026-10-25 00:00 Madrid
+  const fallMidnightEnd = Date.parse('2026-10-25T23:00:00Z')   // 2026-10-26 00:00 Madrid
+  assert.equal(fallMidnightEnd - fallMidnightStart, 25 * 3_600_000)
+  assert.equal(integrate(fallMidnightStart, fallMidnightEnd), 25 * 3_600_000)
+})
+
+test('rule: missing profile file falls back to uniform with quiet note', () => {
+  const res = validateProfile(null)
+  assert.equal(res.profile, null)
+  assert.match(res.note ?? '', /profile: none/)
+
+  const now = MIDNIGHT + 10 * 3_600_000
+  const { rows } = buildRows([window()], {}, now, {}, {}, {}, { profile: res.profile, profileNote: res.note })
+  assert.equal(rows[0].remainingTodayAdaptive, null)
+  assert.equal(rows[0].profileNote, res.note)
+})
+
+test('rule: invalid profile file (wrong length, NaN, negative, version) falls back to uniform', () => {
+  const wrongLength = validateProfile({ version: 1, timezone: 'Europe/Madrid', days: 30, weights: [1, 2, 3] })
+  assert.equal(wrongLength.profile, null)
+  assert.match(wrongLength.note ?? '', /profile ignored: expected 168 weights/)
+
+  const withNaN = new Array(168).fill(1)
+  withNaN[5] = NaN
+  const nanRes = validateProfile({ version: 1, timezone: 'Europe/Madrid', days: 30, weights: withNaN })
+  assert.equal(nanRes.profile, null)
+  assert.match(nanRes.note ?? '', /profile ignored: weights must be non-negative finite numbers/)
+
+  const withNeg = new Array(168).fill(1)
+  withNeg[10] = -0.5
+  const negRes = validateProfile({ version: 1, timezone: 'Europe/Madrid', days: 30, weights: withNeg })
+  assert.equal(negRes.profile, null)
+  assert.match(negRes.note ?? '', /profile ignored: weights must be non-negative finite numbers/)
+
+  const wrongVersion = validateProfile({ version: 2, timezone: 'Europe/Madrid', days: 30, weights: new Array(168).fill(1) })
+  assert.equal(wrongVersion.profile, null)
+  assert.match(wrongVersion.note ?? '', /profile ignored: unsupported version/)
+
+  const zeroWeights = validateProfile({ version: 1, timezone: 'Europe/Madrid', days: 30, weights: new Array(168).fill(0) })
+  assert.equal(zeroWeights.profile, null)
+  assert.match(zeroWeights.note ?? '', /profile ignored: sum of weights must be positive/)
+})
+
+test('rule: profile with days < 14 falls back to uniform with specific note', () => {
+  const shortDays = validateProfile({
+    version: 1,
+    timezone: 'Europe/Madrid',
+    days: 10,
+    weights: new Array(168).fill(1)
+  })
+  assert.equal(shortDays.profile, null)
+  assert.equal(shortDays.note, 'profile has 10 days, needs 14')
+
+  const validDays = validateProfile({
+    version: 1,
+    timezone: 'Europe/Madrid',
+    days: 14,
+    weights: new Array(168).fill(1)
+  })
+  assert.ok(validDays.profile !== null)
+  assert.equal(validDays.note, null)
+})
+
+test('rule: samples cap keeps a full week (>= 2016 samples)', () => {
+  const now = MIDNIGHT + 6 * DAY
+  const resetsAt = MIDNIGHT + 7 * DAY
+  const cycleStart = resetsAt - 7 * DAY
+
+  const samples: UsageSample[] = []
+  for (let i = 0; i < 3000; i++) {
+    const at = cycleStart + i * 3 * 60_000
+    if (at <= now) {
+      samples.push({ at, used: 10 + (i / 3000) * 40 })
+    }
+  }
+  assert.ok(samples.length > 2500)
+  const { samples: storedSamples } = buildRows(
+    [window({ resetsAt })],
+    {},
+    now,
+    {},
+    {},
+    { 'claude.weekly': samples }
+  )
+  const kept = storedSamples['claude.weekly']
+  assert.ok(kept.length >= 2016, `kept ${kept.length} samples, needed >= 2016`)
+  assert.equal(kept.length, SAMPLES_CAP)
+})
+
+test('rule: 0.3.0 storage still loads seamlessly', () => {
+  const stored030Baselines = {
+    'claude.weekly': {
+      date: '2026-11-02',
+      usedAtStart: 45,
+      resetsAt: MIDNIGHT + 2.5 * DAY,
+      firstSeenAt: MIDNIGHT + 3600_000,
+      source: 'reading' as const
+    }
+  }
+  const stored030Samples = {
+    'claude.weekly': [
+      { at: MIDNIGHT + 1 * 3_600_000, used: 45 },
+      { at: MIDNIGHT + 2 * 3_600_000, used: 46 }
+    ]
+  }
+  const now = MIDNIGHT + 10 * 3_600_000
+  const { rows, baselines, samples } = buildRows(
+    [window({ usedPercent: 55 })],
+    stored030Baselines,
+    now,
+    {},
+    {},
+    stored030Samples
+  )
+  assert.equal(rows[0].usedAtStart, 45)
+  assert.equal(rows[0].usedToday, 10)
+  assert.equal(baselines['claude.weekly'].usedAtStart, 45)
+  assert.equal(samples['claude.weekly'].length, 3)
 })

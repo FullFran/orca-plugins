@@ -237,3 +237,27 @@ test('worker persists usage samples and computes burn rate', async () => {
   assert.equal(samples['claude.weekly'].length, 2)
   await worker.deactivate()
 })
+
+test('worker loads quota-pace-profile.json and calculates adaptive allowance', async () => {
+  const f = fake()
+  f.deps.readJson = async (file: string) => {
+    if (file.endsWith('/quota-pace-profile.json')) {
+      return {
+        version: 1,
+        generatedAt: '2026-11-09T14:00:00Z',
+        timezone: 'Europe/Madrid',
+        days: 30,
+        weights: new Array(168).fill(1)
+      }
+    }
+    throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+  }
+  const worker = await mountWorker(createWorker(f.deps), { host: mockHost() })
+  const snap = (await worker.request('pace.get')) as PaceSnapshot
+  assert.equal(snap.error, null)
+  const claude = row(snap, 'claude.weekly')
+  assert.equal(claude.profileDays, 30)
+  assert.ok(claude.remainingTodayAdaptive !== null && claude.remainingTodayAdaptive !== undefined)
+  assert.equal(claude.profileNote, null)
+  await worker.deactivate()
+})
