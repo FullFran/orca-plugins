@@ -1,0 +1,24 @@
+{
+  "manifestVersion": 2,
+  "id": "skill-cheatsheet",
+  "name": "Skill Cheat Sheet",
+  "version": "0.1.0",
+  "description": "Cheat sheet of the Claude Code skills hidden from the model, which you invoke by hand, read live from ~/.claude.",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "skill-cheatsheet",
+        "title": "Skills",
+        "icon": "book",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ]
+  }
+}
