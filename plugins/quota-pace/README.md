@@ -14,6 +14,9 @@ One card per weekly window Orca reports (`windowMinutes` 10080), such as "Claude
 - **Live allowance today & Sustainable pace**: how much quota can be spent from the current
   moment until midnight without compromising uniform allocation over the remainder of the week
   (e.g. `Live allowance: 4.8 pp · Sustainable: 0.50 pp/h`).
+- **Live allowance (adaptive)**: activity-weighted allowance when a historical activity profile is available,
+  weighting remaining quota according to typical hourly habits rather than flat hours
+  (e.g. `Live allowance (adaptive): 5.2 pp (estimated, 30d profile)`).
 - **Current pace & Multiplier**: burn rate over recent usage (in pp/h) and pace multiplier relative
   to sustainable pace (e.g. `Current pace: 0.82 pp/h (1.64x pace)`). Identifies brief spikes,
   unsustainable trends, low consumption, and explicit insufficient data / stale states.
@@ -46,7 +49,22 @@ and no reserve ($s = 0$):
 - Sustainable pace: $34 / 68.65 \approx 0.50 \text{ pp/h}$
 - Live allowance today: $34 \times (9.65 / 68.65) \approx 4.8 \text{ pp}$
 
-### 2. Traditional Daily Budget (Anchor at Local Midnight)
+### 2. Adaptive Activity-Weighted Allowance (v0.4)
+
+When an activity profile file is available, quota is distributed according to expected hourly activity $w(t)$:
+
+```text
+B_adaptive(a, b) = R * (1 - s) * ∫_a^b w(t) dt / ∫_a^T w(t) dt
+```
+
+where $a = t$ (now) and $b = \min(m, T)$. The integral is evaluated piecewise constant per local hour
+across real timestamps, handling partial hours at $t$, midnight $m$, and reset $T$, as well as DST
+transitions (23h and 25h days).
+
+When $w(t) \equiv 1$ (all-ones weights), $B_{\text{adaptive}}$ is mathematically equivalent to the uniform
+live allowance $B_{\text{hoy}}$.
+
+### 3. Traditional Daily Budget (Anchor at Local Midnight)
 
 For each window, with `startOfToday` local midnight:
 
@@ -59,7 +77,7 @@ remainingToday  = allowanceToday - usedToday               (negative = over budg
 dailyDeviation  = usedToday - allowanceToday
 ```
 
-### 3. Burn Rate & Exhaustion Engine
+### 4. Burn Rate & Exhaustion Engine
 
 - **Short window (30m)**: detects transient consumption spikes.
 - **Sustained window (4h)**: calculates baseline trend slope $\Delta \text{used} / \Delta t$ in pp/h.
@@ -73,6 +91,29 @@ dailyDeviation  = usedToday - allowanceToday
   - `exhausted`: quota at 100% used.
 - **Projected exhaustion**: $\text{now} + (R / \text{currentBurnRate}) \times 1\text{ hour}$ when exhaustion precedes $T$.
 
+## Activity Profile Contract & Fallback Rules
+
+- **Path**: `<orca config dir>/quota-pace-profile.json` (resolves `$XDG_CONFIG_HOME/orca` or `~/.config/orca` on Linux).
+- **Format (v1)**:
+  ```json
+  {
+    "version": 1,
+    "generatedAt": "2026-11-09T14:00:00Z",
+    "timezone": "Europe/Madrid",
+    "from": "2026-10-10",
+    "to": "2026-11-09",
+    "days": 30,
+    "weights": [168 numbers]
+  }
+  ```
+  - `weights[d*24 + h]`: relative expected activity for local weekday $d$ (`Date.getDay()`: 0 = Sunday … 6 = Saturday) and local hour $h$ (0–23), in the profile's timezone.
+  - Mean of the 168 values is 1. Weights represent relative shape only, never raw tokens or percentages.
+- **Validation & Fallback**:
+  - **Missing file**: falls back to uniform live allowance with a quiet note (`profile: none (uniform)`).
+  - **Schema validation**: requires `version === 1`, exactly 168 non-negative finite numbers, `sum > 0`, finite `days`. Any violation falls back to uniform with note `profile ignored: <reason>`.
+  - **Sufficient history**: requires `days >= 14` (`MIN_PROFILE_DAYS = 14`). Profiles with fewer days fall back to uniform with note `profile has N days, needs 14`.
+  - **Timezone handling**: hours and weekdays are computed directly in the profile's declared timezone via `Intl.DateTimeFormat`. If the timezone string is invalid, the plugin falls back to uniform with note `profile ignored: invalid timezone "<tz>"`.
+
 ## Measured vs Estimated
 
 - **Measured (high reliability)**:
@@ -83,15 +124,17 @@ dailyDeviation  = usedToday - allowanceToday
   - Token-derived baselines from Orca's daily token statistics (`orca-<provider>-usage.json`).
     Token counts are an approximation because different models and reasoning tokens carry different quota weights.
   - Burn rate slope and exhaustion timestamps (projected from recent discrete samples).
+  - Activity-weighted live allowance (`Live allowance (adaptive)`), derived from the historical usage distribution in `quota-pace-profile.json` and labelled with the profile's day count.
 
 ## Storage & Backward Compatibility
 
 - `storage:own`: stores daily baselines (`baselines`) and recent sample history (`samples`).
-- Fully backward-compatible with 0.2.0 stored data; previous fields retain their exact meaning.
+- Samples cap: raised from 200 to 2500 samples (`SAMPLES_CAP`), ensuring a full week of 5-minute polling ($\ge 2016$ samples) is stored to cover the weekly burn window while keeping storage bounded.
+- Fully backward-compatible with 0.2.0 and 0.3.0 stored data; previous fields retain their exact meaning.
 
 ## Develop & Test
 
 ```sh
-orca-ide plugin test plugins/quota-pace --json   # 65 tests covering all spec rules
+orca-ide plugin test plugins/quota-pace --json   # 79 tests covering all spec rules
 orca-ide plugin check plugins/quota-pace --json  # renders panel scenarios
 ```
