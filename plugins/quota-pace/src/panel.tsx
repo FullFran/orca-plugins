@@ -43,15 +43,14 @@ function pct(value: number): string {
   return `${value.toFixed(1)}%`
 }
 
+// One format for every time on the card: English weekday, 24 h clock, local timezone.
 function clock(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date(at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 }
 
-function formatExhaustion(at: number): string {
-  const d = new Date(at)
-  const weekday = d.toLocaleDateString('en-US', { weekday: 'short' })
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-  return `${weekday} ${time}`
+export function weekdayTime(at: number): string {
+  const weekday = new Date(at).toLocaleDateString('en-US', { weekday: 'short' })
+  return `${weekday} ${clock(at)}`
 }
 
 export function formatRelativeReset(hours: number): string {
@@ -123,7 +122,7 @@ export function statusLine(row: PaceRow): { text: string; tone?: 'warning' | 'da
   if (row.forecastStatus === 'unsustainable') {
     if (row.estimatedExhaustionAt != null) {
       return {
-        text: `Faster than sustainable — at this rate the week runs out ${formatExhaustion(row.estimatedExhaustionAt)}`,
+        text: `Faster than sustainable — at this rate the week runs out ${weekdayTime(row.estimatedExhaustionAt)}`,
         tone: 'warning'
       }
     }
@@ -182,7 +181,7 @@ function WindowCard({ row }: { row: PaceRow }) {
 
         <Text muted size="xs">
           {`Week: ${Math.round(row.usedNow)}% used · resets ${
-            row.resetDescription ?? clock(row.resetsAt)
+            weekdayTime(row.resetsAt)
           } (in ${relativeReset})`}
         </Text>
 

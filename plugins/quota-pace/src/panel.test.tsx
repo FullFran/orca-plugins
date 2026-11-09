@@ -58,7 +58,7 @@ test('shows what is left for today, the weekly rest and the reset', async () => 
   const all = texts(view)
   assert.match(all, /You can spend 4\.8% of your week today/)
   assert.match(all, /On track/)
-  assert.match(all, /Week: 70% used · resets jue, 12:00 \(in 2 d 12 h\)/)
+  assert.match(all, /Week: 70% used · resets (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{2}:\d{2} \(in 2 d 12 h\)/)
   const bar = view.find({ type: 'Progress' })
   assert.equal(bar?.props?.value, 70)
   assert.equal(bar?.props?.label, 'Week used: 70% (today: 10.0%)')
@@ -346,7 +346,7 @@ test('rule 4: week line with relative reset time', async () => {
   })
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
   const all = texts(view)
-  assert.match(all, /Week: 66% used · resets Thu 11:00 \(in 2 d 20 h\)/)
+  assert.match(all, /Week: 66% used · resets (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{2}:\d{2} \(in 2 d 20 h\)/)
   const bar = view.find({ type: 'Progress' })
   assert.equal(bar?.props?.value, 66)
   assert.match(String(bar?.props?.label), /Week used: 66%/)
@@ -454,4 +454,10 @@ test('unhide restores: clicking Show clears hidden keys and restores cards', asy
   assert.doesNotMatch(texts(view), /hidden · Show/)
   assert.deepEqual(view.persisted.storage['hidden'], [])
   await view.unmount()
+})
+
+test('reset and exhaustion times share one English 24 h format, ignoring the CLI locale', () => {
+  const at = new Date(2026, 10, 12, 18, 5).getTime() // local Thu 12 Nov 2026, 18:05
+  assert.equal(panel.weekdayTime(at), 'Thu 18:05')
+  assert.equal(panel.weekdayTime(new Date(2026, 10, 12, 0, 30).getTime()), 'Thu 00:30')
 })
