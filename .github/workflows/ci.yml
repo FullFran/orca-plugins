@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  plugins:
+    name: Validate and test plugins
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install the Orca CLI from the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R stablyai/orca --pattern 'orca-ide_*_amd64.deb' --dir "$RUNNER_TEMP"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "$RUNNER_TEMP"/orca-ide_*_amd64.deb
+          orca-ide --version
+      - name: Validate the catalog and every plugin, run plugin tests
+        run: |
+          # Not -e: check every plugin and report each failure.
+          set +e -u
+          failed=()
+          orca-ide plugin validate orca-catalog.json || failed+=(orca-catalog.json)
+          for dir in plugins/*/; do
+            dir=${dir%/}
+            echo "::group::$dir"
+            orca-ide plugin validate "$dir" || failed+=("$dir: validate")
+            if compgen -G "$dir/src/*.test.ts*" >/dev/null; then
+              orca-ide plugin test "$dir" || failed+=("$dir: test")
+            fi
+            echo "::endgroup::"
+          done
+          if (( ${#failed[@]} )); then
+            printf '::error::failed: %s\n' "${failed[@]}"
+            exit 1
+          fi
