@@ -87,6 +87,25 @@
       "description": "Spreads what is left of each weekly AI-agent quota over the days until it resets: today's allowance and how much of it is left.",
       "releases": [
         {
+          "version": "0.4.0",
+          "commit": "ad99c174d179dd0631891465b6d4d67698888fd2",
+          "contentHash": "a43958a10b8ee52a82c23de8e07c63c4b7489c671a676bf2001c980a59558be1",
+          "execution": "trusted-worker",
+          "minimumOrca": "1.4.246",
+          "name": "Quota Pace",
+          "contributes": [
+            {
+              "kind": "panels",
+              "name": "Quota Pace"
+            }
+          ],
+          "capabilities": [
+            "storage:own"
+          ],
+          "updatedAt": "2026-11-09",
+          "repository": "https://github.com/FullFran/orca-plugins"
+        },
+        {
           "version": "0.3.0",
           "commit": "d4a966b7afd65a127a51733d2a4814ed111ee227",
           "contentHash": "4b81a4ebee9264f9b03a945577ed70c37d9be836a585747db47394e7e151823b",
