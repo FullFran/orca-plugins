@@ -73,5 +73,17 @@ export default defineCheck({
     ],
     error: null
   }),
+  'adaptive profile': stub({
+    fetchedAt: MIDNIGHT + 36e6,
+    rows: [
+      {
+        ...base,
+        remainingTodayAdaptive: 6.1,
+        profileDays: 30
+      }
+    ],
+    issues: [],
+    error: null
+  }),
   'cli failed': stub({ fetchedAt: MIDNIGHT, rows: [], issues: [], error: 'spawn orca-ide ENOENT' })
 })

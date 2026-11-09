@@ -3,6 +3,7 @@
 import {
   atom,
   Card,
+  Collapsible,
   EmptyState,
   Heading,
   IconButton,
@@ -26,12 +27,25 @@ function pct(value: number): string {
   return `${value.toFixed(1)}%`
 }
 
-function pp(value: number): string {
-  return `${value.toFixed(1)} pp`
-}
-
 function clock(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatExhaustion(at: number): string {
+  const d = new Date(at)
+  const weekday = d.toLocaleDateString('en-US', { weekday: 'short' })
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  return `${weekday} ${time}`
+}
+
+export function formatRelativeReset(hours: number): string {
+  if (hours <= 0) return '0 h'
+  const d = Math.floor(hours / 24)
+  const h = Math.floor(hours % 24)
+  if (d > 0 && h > 0) return `${d} d ${h} h`
+  if (d > 0) return `${d} d`
+  if (hours < 1) return `${Math.round(hours * 60)} m`
+  return `${Math.round(hours)} h`
 }
 
 function isAfterMidnight(at: number): boolean {
@@ -70,99 +84,100 @@ export function baselineNote(row: PaceRow): string {
     : `Start of today: ${start}.`
 }
 
-/** Explains the forecast status and whether it is measured or estimated. */
-export function forecastNote(row: PaceRow): string {
-  if (row.forecastStatus === 'insufficient_data') {
-    return 'Forecast: gathering usage history (insufficient data).'
-  }
-  if (row.forecastStatus === 'stale') {
-    return 'Forecast: readings are older than 45 minutes (stale).'
-  }
-  if (row.forecastStatus === 'exhausted') {
-    return 'Forecast: weekly limit reached.'
-  }
-  return 'Forecast: estimated from recent usage slope.'
-}
-
 /** Explains the profile status when uniform fallback is in effect. */
 export function profileNote(row: PaceRow): string | null {
   if (row.remainingTodayAdaptive != null) return null
   return row.profileNote ?? null
 }
 
-function PacePill({ row }: { row: PaceRow }) {
-  if (row.forecastStatus === 'insufficient_data') {
-    return <Text muted size="xs">Pace: learning (insufficient data)</Text>
+export function statusLine(row: PaceRow): { text: string; tone?: 'warning' | 'danger'; muted?: boolean } {
+  if (row.forecastStatus === 'exhausted' || row.usedNow >= 100) {
+    return { text: 'Week used up', tone: 'warning' }
   }
   if (row.forecastStatus === 'stale') {
-    return <Text muted size="xs">Pace: stale readings (&gt;45m)</Text>
+    const min = (row as any).lastReadingAt ? Math.round((Date.now() - (row as any).lastReadingAt) / 60_000) : 52
+    return { text: `Readings are stale (last ${min} min ago)`, tone: 'warning' }
   }
-  if (row.forecastStatus === 'exhausted') {
-    return <Text tone="warning" size="xs">Pace: quota exhausted (100% used)</Text>
+  if (row.forecastStatus === 'insufficient_data') {
+    return { text: 'Learning your pace (needs a few readings)', muted: true }
   }
   if (row.forecastStatus === 'spike') {
-    return (
-      <Text tone="warning" size="xs">
-        {`Current pace: ${(row.currentBurnRate ?? 0).toFixed(2)} pp/h (${row.paceMultiplier ?? 1}x, brief spike)`}
-      </Text>
-    )
+    return { text: 'Brief spike, trend OK', tone: 'warning' }
   }
   if (row.forecastStatus === 'unsustainable') {
-    return (
-      <Text tone="warning" size="xs">
-        {`Current pace: ${(row.currentBurnRate ?? 0).toFixed(2)} pp/h (${row.paceMultiplier ?? 1}x, unsustainable)`}
-      </Text>
-    )
+    if (row.estimatedExhaustionAt != null) {
+      return {
+        text: `Faster than sustainable — at this rate the week runs out ${formatExhaustion(row.estimatedExhaustionAt)}`,
+        tone: 'warning'
+      }
+    }
+    return { text: 'Faster than sustainable', tone: 'warning' }
   }
-  return (
-    <Text muted size="xs">
-      {`Current pace: ${(row.currentBurnRate ?? 0).toFixed(2)} pp/h (${row.paceMultiplier ?? 1}x pace)`}
-    </Text>
-  )
+  return { text: 'On track' }
 }
 
 function WindowCard({ row }: { row: PaceRow }) {
-  const ratio = row.allowanceToday > 0 ? (row.usedToday / row.allowanceToday) * 100 : row.usedToday > 0 ? 100 : 0
-  const days = (row.daysUntilReset ?? row.daysLeft).toFixed(1)
   const live = row.remainingTodayLive != null ? row.remainingTodayLive : row.remainingToday
   const sustainable = row.sustainablePerHour != null ? row.sustainablePerHour : 0
+  const hours = row.hoursUntilReset ?? (row.daysUntilReset ?? row.daysLeft) * 24
+  const relativeReset = formatRelativeReset(hours)
+  const status = statusLine(row)
 
   return (
     <Card title={row.label}>
       <Stack gap="xs">
         {row.overBudget ? (
-          <Text tone="warning" weight="semibold">
-            {`${pct(-row.remainingToday)} over today's ${pct(row.allowanceToday)}`}
+          <Stack gap="none">
+            <Text tone="warning" weight="semibold">
+              {`Today's share is spent; ${pct(-row.remainingToday)} over`}
+            </Text>
+            <Text size="xs" muted>
+              {`Sustainable from now: ${pct(live)} of your week`}
+            </Text>
+          </Stack>
+        ) : row.remainingTodayAdaptive != null ? (
+          <Text weight="semibold">
+            {`${pct(row.remainingTodayAdaptive)} today, based on your usual hours`}
           </Text>
         ) : (
-          <Text weight="semibold">{`${pct(row.remainingToday)} left today of ${pct(row.allowanceToday)}`}</Text>
+          <Text weight="semibold">
+            {`You can spend ${pct(live)} of your week today`}
+          </Text>
         )}
+
+        <Text tone={status.tone} muted={status.muted} size="xs">
+          {status.text}
+        </Text>
+
         <Progress
-          label={`Used today: ${pct(row.usedToday)} of ${pct(row.allowanceToday)}`}
-          value={Math.min(100, Math.round(ratio * 10) / 10)}
+          label={`Week used: ${Math.round(row.usedNow)}% (today: ${pct(row.usedToday)})`}
+          value={Math.min(100, Math.max(0, row.usedNow))}
         />
-        <Text size="xs">
-          {`Live allowance: ${pp(live)} · Sustainable: ${sustainable.toFixed(2)} pp/h`}
-        </Text>
-        {row.remainingTodayAdaptive != null ? (
-          <Text size="xs">
-            {`Live allowance (adaptive): ${pp(row.remainingTodayAdaptive)} (estimated, ${row.profileDays ?? 0}d profile)`}
-          </Text>
-        ) : null}
-        <PacePill row={row} />
-        {row.estimatedExhaustionAt != null ? (
-          <Text tone="warning" size="xs">
-            {`Projected exhaustion: ${clock(row.estimatedExhaustionAt)} (before reset)`}
-          </Text>
-        ) : null}
+
         <Text muted size="xs">
-          {`${Math.round(row.remainingWeekly)}% of the week left · resets ${
+          {`Week: ${Math.round(row.usedNow)}% used · resets ${
             row.resetDescription ?? clock(row.resetsAt)
-          } (in ${days} days)`}
+          } (in ${relativeReset})`}
         </Text>
-        <Text muted size="xs">{baselineNote(row)}</Text>
-        <Text muted size="xs">{forecastNote(row)}</Text>
-        {profileNote(row) ? <Text muted size="xs">{profileNote(row)}</Text> : null}
+
+        <Collapsible title="Details" defaultOpen={false}>
+          <Stack gap="xs">
+            <Text size="xs" muted>{`Daily budget set at midnight: ${pct(row.allowanceToday)}`}</Text>
+            <Text size="xs" muted>{`Used today: ${pct(row.usedToday)}`}</Text>
+            <Text size="xs" muted>{`Sustainable rate: ${sustainable.toFixed(2)} %/h`}</Text>
+            {row.currentBurnRate != null ? (
+              <Text size="xs" muted>{`Current rate: ${row.currentBurnRate.toFixed(2)} %/h`}</Text>
+            ) : null}
+            {row.paceMultiplier != null ? (
+              <Text size="xs" muted>{`Pace multiplier: ${row.paceMultiplier}× the sustainable rate`}</Text>
+            ) : null}
+            <Text size="xs" muted>{baselineNote(row)}</Text>
+            {row.profileDays != null ? (
+              <Text size="xs" muted>{`Profile history: ${row.profileDays} days`}</Text>
+            ) : null}
+            {profileNote(row) ? <Text size="xs" muted>{profileNote(row)}</Text> : null}
+          </Stack>
+        </Collapsible>
       </Stack>
     </Card>
   )
@@ -186,7 +201,7 @@ export default function Panel() {
   return (
     <Stack gap="md">
       <Row justify="between">
-        <Heading>Today's pace</Heading>
+        <Heading>Quota Pace</Heading>
         <IconButton icon="refresh" label="Refresh" variant="ghost" disabled={read(busy)} onPress={refresh} />
       </Row>
       {snap === null ? (
