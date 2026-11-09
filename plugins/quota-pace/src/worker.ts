@@ -16,11 +16,13 @@ import {
   type Baseline,
   type DailyUsage,
   type PaceSnapshot,
-  type UsageHistory
+  type UsageHistory,
+  type UsageSample
 } from './pace'
 
 export const POLL_MS = 5 * 60_000
 const BASELINES = 'baselines'
+const SAMPLES = 'samples'
 const CLI_TIMEOUT_MS = 20_000
 
 export interface WorkerDeps {
@@ -140,6 +142,11 @@ async function storedBaselines(orca: OrcaWorkerApi): Promise<Record<string, Base
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, Baseline>) : {}
 }
 
+async function storedSamples(orca: OrcaWorkerApi): Promise<Record<string, UsageSample[]>> {
+  const value = await orca.storage.get(SAMPLES)
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, UsageSample[]>) : {}
+}
+
 /** The worker's activate/deactivate pair, with the CLI, clock and timer injected. */
 export function createWorker(deps: WorkerDeps) {
   let latest: PaceSnapshot | null = null
@@ -152,8 +159,15 @@ export function createWorker(deps: WorkerDeps) {
     try {
       const { windows, issues } = extractWeeklyWindows(parseRateLimits(await deps.run()))
       const { history, daily } = await readUsageSources(deps)
-      const { rows, baselines } = buildRows(windows, await storedBaselines(orca), now, history, daily)
-      await orca.storage.set(BASELINES, baselines)
+      const [baselinesStore, samplesStore] = await Promise.all([
+        storedBaselines(orca),
+        storedSamples(orca)
+      ])
+      const { rows, baselines, samples } = buildRows(windows, baselinesStore, now, history, daily, samplesStore)
+      await Promise.all([
+        orca.storage.set(BASELINES, baselines),
+        orca.storage.set(SAMPLES, samples)
+      ])
       snapshot = { fetchedAt: now, rows, issues, error: null }
     } catch (error) {
       orca.log(`quota-pace: ${message(error)}`)

@@ -26,6 +26,10 @@ function pct(value: number): string {
   return `${value.toFixed(1)}%`
 }
 
+function pp(value: number): string {
+  return `${value.toFixed(1)} pp`
+}
+
 function clock(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
@@ -66,9 +70,57 @@ export function baselineNote(row: PaceRow): string {
     : `Start of today: ${start}.`
 }
 
+/** Explains the forecast status and whether it is measured or estimated. */
+export function forecastNote(row: PaceRow): string {
+  if (row.forecastStatus === 'insufficient_data') {
+    return 'Forecast: gathering usage history (insufficient data).'
+  }
+  if (row.forecastStatus === 'stale') {
+    return 'Forecast: readings are older than 45 minutes (stale).'
+  }
+  if (row.forecastStatus === 'exhausted') {
+    return 'Forecast: weekly limit reached.'
+  }
+  return 'Forecast: estimated from recent usage slope.'
+}
+
+function PacePill({ row }: { row: PaceRow }) {
+  if (row.forecastStatus === 'insufficient_data') {
+    return <Text muted size="xs">Pace: learning (insufficient data)</Text>
+  }
+  if (row.forecastStatus === 'stale') {
+    return <Text muted size="xs">Pace: stale readings (&gt;45m)</Text>
+  }
+  if (row.forecastStatus === 'exhausted') {
+    return <Text tone="warning" size="xs">Pace: quota exhausted (100% used)</Text>
+  }
+  if (row.forecastStatus === 'spike') {
+    return (
+      <Text tone="warning" size="xs">
+        {`Current pace: ${(row.currentBurnRate ?? 0).toFixed(2)} pp/h (${row.paceMultiplier ?? 1}x, brief spike)`}
+      </Text>
+    )
+  }
+  if (row.forecastStatus === 'unsustainable') {
+    return (
+      <Text tone="warning" size="xs">
+        {`Current pace: ${(row.currentBurnRate ?? 0).toFixed(2)} pp/h (${row.paceMultiplier ?? 1}x, unsustainable)`}
+      </Text>
+    )
+  }
+  return (
+    <Text muted size="xs">
+      {`Current pace: ${(row.currentBurnRate ?? 0).toFixed(2)} pp/h (${row.paceMultiplier ?? 1}x pace)`}
+    </Text>
+  )
+}
+
 function WindowCard({ row }: { row: PaceRow }) {
   const ratio = row.allowanceToday > 0 ? (row.usedToday / row.allowanceToday) * 100 : row.usedToday > 0 ? 100 : 0
-  const days = row.daysLeft.toFixed(1)
+  const days = (row.daysUntilReset ?? row.daysLeft).toFixed(1)
+  const live = row.remainingTodayLive != null ? row.remainingTodayLive : row.remainingToday
+  const sustainable = row.sustainablePerHour != null ? row.sustainablePerHour : 0
+
   return (
     <Card title={row.label}>
       <Stack gap="xs">
@@ -83,12 +135,22 @@ function WindowCard({ row }: { row: PaceRow }) {
           label={`Used today: ${pct(row.usedToday)} of ${pct(row.allowanceToday)}`}
           value={Math.min(100, Math.round(ratio * 10) / 10)}
         />
+        <Text size="xs">
+          {`Live allowance: ${pp(live)} · Sustainable: ${sustainable.toFixed(2)} pp/h`}
+        </Text>
+        <PacePill row={row} />
+        {row.estimatedExhaustionAt != null ? (
+          <Text tone="warning" size="xs">
+            {`Projected exhaustion: ${clock(row.estimatedExhaustionAt)} (before reset)`}
+          </Text>
+        ) : null}
         <Text muted size="xs">
           {`${Math.round(row.remainingWeekly)}% of the week left · resets ${
             row.resetDescription ?? clock(row.resetsAt)
           } (in ${days} days)`}
         </Text>
         <Text muted size="xs">{baselineNote(row)}</Text>
+        <Text muted size="xs">{forecastNote(row)}</Text>
       </Stack>
     </Card>
   )

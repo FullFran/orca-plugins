@@ -213,3 +213,27 @@ test('missing history files leave the plugin on its own readings', async () => {
   assert.equal(snap.error, null)
   assert.equal(row(snap, 'claude.weekly').baselineSource, 'reading')
 })
+
+test('worker persists usage samples and computes burn rate', async () => {
+  const f = fake()
+  const host = mockHost()
+  const worker = await mountWorker(createWorker(f.deps), { host })
+
+  const snapshot1 = (await worker.request('pace.get')) as PaceSnapshot
+  assert.equal(snapshot1.error, null)
+
+  f.setNow(NOW + 20 * 60_000)
+  const modifiedList = JSON.parse(JSON.stringify(REAL_ACCOUNT_LIST))
+  modifiedList.result.rateLimits.claude.weekly.usedPercent = 62
+  f.setOutput(JSON.stringify(modifiedList))
+
+  const snapshot2 = (await worker.request('pace.refresh')) as PaceSnapshot
+  const claude = snapshot2.rows.find((r) => r.key === 'claude.weekly')
+  assert.ok(claude)
+  assert.equal(claude.usedNow, 62)
+  assert.equal(claude.forecastStatus, 'unsustainable')
+  const samples = host.data().storage.samples as Record<string, unknown[]>
+  assert.ok(Array.isArray(samples['claude.weekly']))
+  assert.equal(samples['claude.weekly'].length, 2)
+  await worker.deactivate()
+})

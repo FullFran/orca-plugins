@@ -1,9 +1,11 @@
 // Pure pace logic, shared by the worker and the panel: no Orca or Node imports.
 
-const DAY_MS = 86_400_000
-const WEEK_MINUTES = 10_080
+export const HOUR_MS = 3_600_000
+export const DAY_MS = 86_400_000
+export const WEEK_MS = 7 * DAY_MS
+export const WEEK_MINUTES = 10_080
 /** resetsAt moves by a few ms between readings; a bigger move means a new window. */
-const RESET_JITTER_MS = 60 * 60_000
+export const RESET_JITTER_MS = 60 * 60_000
 
 /** One weekly quota window read from `orca account list --json`. */
 export interface WeeklyWindow {
@@ -41,6 +43,34 @@ export interface Baseline {
 
 export type BaselineSource = 'reading' | 'history' | 'estimate'
 
+export type ForecastStatus =
+  | 'insufficient_data'
+  | 'stale'
+  | 'low'
+  | 'normal'
+  | 'spike'
+  | 'unsustainable'
+  | 'exhausted'
+
+export interface PaceForecast {
+  currentBurnRate: number | null // in pp/h (null if insufficient data or stale)
+  sustainableBurnRate: number // in pp/h
+  paceMultiplier: number | null // currentBurnRate / sustainableBurnRate
+  estimatedExhaustionAt: number | null // timestamp ms or null
+  projectedRemainingAtReset: number | null // pp or null
+  forecastStatus: ForecastStatus
+}
+
+export interface PaceLive {
+  remainingTodayLive: number // pp
+  sustainablePerHour: number // pp/h
+  hoursUntilReset: number
+  daysUntilReset: number
+  reservePercent: number
+  dailyBudget: number
+  dailyDeviation: number
+}
+
 export interface Pace {
   daysLeft: number
   allowanceToday: number
@@ -51,7 +81,7 @@ export interface Pace {
 }
 
 /** What the panel draws for one window. */
-export interface PaceRow extends Pace {
+export interface PaceRow extends Pace, PaceLive, PaceForecast {
   key: string
   provider: string
   label: string
@@ -75,6 +105,12 @@ export interface PaceSnapshot {
 export function startOfLocalDay(now: number): number {
   const d = new Date(now)
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+/** Next local midnight, calendar-aware to handle DST changes (23h/25h days). */
+export function nextLocalMidnight(now: number): number {
+  const d = new Date(now)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0).getTime()
 }
 
 export function localDateKey(now: number): string {
@@ -119,7 +155,7 @@ function asWindow(value: unknown): { usedPercent: number; resetsAt: number; rese
   if (typeof usedPercent !== 'number' || !Number.isFinite(usedPercent)) return null
   if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) return null
   return {
-    usedPercent,
+    usedPercent: Math.max(0, Math.min(100, usedPercent)),
     resetsAt,
     resetDescription: typeof resetDescription === 'string' ? resetDescription : null
   }
@@ -170,6 +206,76 @@ export function nextBaseline(previous: Baseline | undefined, window: WeeklyWindo
   return { date, usedAtStart: window.usedPercent, resetsAt: window.resetsAt, firstSeenAt: now, source: 'reading' }
 }
 
+export interface SustainableBudgetInput {
+  remainingWeekly: number
+  now: number
+  resetsAt: number
+  nextMidnight?: number
+  reserveFraction?: number
+}
+
+export interface SustainableBudgetResult {
+  remainingWeekly: number
+  remainingTodayLive: number
+  sustainablePerHour: number
+  hoursUntilReset: number
+  daysUntilReset: number
+  reservePercent: number
+}
+
+/**
+ * Pure function computing how much quota can be spent sustainably from now until end of today:
+ * B_hoy = R * (1 - s) * max(0, min(m, T) - t) / (T - t), where T > t.
+ */
+export function computeSustainableBudget(input: SustainableBudgetInput): SustainableBudgetResult {
+  const { remainingWeekly, now, resetsAt, reserveFraction = 0 } = input
+  const s = Math.max(0, Math.min(1, Number.isFinite(reserveFraction) ? reserveFraction : 0))
+  const R = Math.max(0, Math.min(100, Number.isFinite(remainingWeekly) ? remainingWeekly : 0))
+  const t = now
+  const T = resetsAt
+  const m = input.nextMidnight ?? nextLocalMidnight(t)
+
+  const hoursUntilReset = Math.max(0, (T - t) / HOUR_MS)
+  const daysUntilReset = Math.max(0, (T - t) / DAY_MS)
+  const reservePercent = s * 100
+
+  if (T <= t || R <= 0) {
+    return {
+      remainingWeekly: R,
+      remainingTodayLive: 0,
+      sustainablePerHour: 0,
+      hoursUntilReset: 0,
+      daysUntilReset: 0,
+      reservePercent
+    }
+  }
+
+  const effectiveSpanUntilMidnight = Math.max(0, Math.min(m, T) - t)
+  const totalSpanUntilReset = T - t
+  const remainingTodayLive = R * (1 - s) * (effectiveSpanUntilMidnight / totalSpanUntilReset)
+  const sustainablePerHour = hoursUntilReset > 0 ? (R * (1 - s)) / hoursUntilReset : 0
+
+  return {
+    remainingWeekly: R,
+    remainingTodayLive,
+    sustainablePerHour,
+    hoursUntilReset,
+    daysUntilReset,
+    reservePercent
+  }
+}
+
+/** Interface for activity-weighted budgeting strategies (Section 4). */
+export interface BudgetStrategy {
+  name: 'uniform' | 'scheduled' | 'adaptive'
+  weight(t1: number, t2: number): number
+}
+
+export const uniformBudgetStrategy: BudgetStrategy = {
+  name: 'uniform',
+  weight: (t1: number, t2: number) => Math.max(0, t2 - t1)
+}
+
 /**
  * Spread what was left at the start of today evenly over the days until the reset:
  * daysLeft = (resetsAt - startOfToday) / 1 day, allowanceToday = (100 - usedAtStart) / daysLeft
@@ -183,7 +289,8 @@ export function computePace(input: {
 }): Pace {
   const { usedAtStart, usedNow, resetsAt, now } = input
   const left = Math.max(0, 100 - usedAtStart)
-  const daysLeft = (resetsAt - startOfLocalDay(now)) / DAY_MS
+  const midnight = startOfLocalDay(now)
+  const daysLeft = (resetsAt - midnight) / DAY_MS
   const allowanceToday = daysLeft <= 0 ? left : Math.min(left, left / daysLeft)
   const usedToday = Math.max(0, usedNow - usedAtStart)
   const remainingToday = allowanceToday - usedToday
@@ -207,12 +314,10 @@ export interface UsageSample {
 /** Past readings per window key, from a source that recorded them before this plugin ran. */
 export type UsageHistory = Record<string, UsageSample[]>
 
-const WEEK_MS = 7 * DAY_MS
-
 /**
  * Today's baseline from recorded history: the last reading before local midnight in the current
  * week window, or else the first reading of today. Readings from an earlier week window, or above
- * the current usage, are ignored. Undefined when nothing fits.
+ * the current usage, are ignored.
  */
 export function baselineFromHistory(
   samples: UsageSample[],
@@ -226,10 +331,16 @@ export function baselineFromHistory(
     .sort((a, b) => a.at - b.at)
   const beforeMidnight = valid.filter((s) => s.at < midnight).pop()
   const date = localDateKey(now)
+  const firstToday = valid.find((s) => s.at >= midnight)
+
   if (beforeMidnight) {
+    const gapMs = midnight - beforeMidnight.at
+    // Bug E fix: if beforeMidnight is older than 4 hours and firstToday is closer to midnight, use firstToday.
+    if (gapMs > 4 * HOUR_MS && firstToday && firstToday.at - midnight < gapMs) {
+      return { date, usedAtStart: firstToday.used, resetsAt: window.resetsAt, firstSeenAt: firstToday.at, source: 'history' }
+    }
     return { date, usedAtStart: beforeMidnight.used, resetsAt: window.resetsAt, firstSeenAt: midnight, source: 'history' }
   }
-  const firstToday = valid.find((s) => s.at >= midnight)
   if (firstToday) {
     return { date, usedAtStart: firstToday.used, resetsAt: window.resetsAt, firstSeenAt: firstToday.at, source: 'history' }
   }
@@ -297,6 +408,9 @@ function localDayStart(day: string): number {
  * Today's baseline estimated from Orca's daily tokens: usedAtStart = usedNow x (1 - share), where
  * share = today's tokens / this week window's tokens. Each day counts by how much of it falls inside
  * the window (the first day only partly). Undefined without tokens today or this week.
+ *
+ * NOTE (Bug C): This calculation assumes linear proportionality between token counts and quota percentage.
+ * This is an approximation; different models and reasoning tokens carry different quota weights.
  */
 export function estimateBaselineFromDaily(
   daily: DailyTokens[],
@@ -328,39 +442,223 @@ export function estimateBaselineFromDaily(
   }
 }
 
+export interface BurnRateInput {
+  samples: UsageSample[]
+  now: number
+  resetsAt: number
+  remainingWeekly: number
+  sustainablePerHour: number
+}
+
+/**
+ * Calculates burn rate, pace multiplier, and exhaustion prediction across multiple observation windows.
+ * Distinguishes spikes, unsustainable trends, low consumption, stale data, and insufficient data.
+ */
+export function computeBurnRate(input: BurnRateInput): PaceForecast {
+  const { samples, now, resetsAt, remainingWeekly, sustainablePerHour } = input
+  const R = Math.max(0, Math.min(100, remainingWeekly))
+
+  if (R <= 0) {
+    return {
+      currentBurnRate: 0,
+      sustainableBurnRate: 0,
+      paceMultiplier: 0,
+      estimatedExhaustionAt: now,
+      projectedRemainingAtReset: 0,
+      forecastStatus: 'exhausted'
+    }
+  }
+
+  const cycleStart = resetsAt - WEEK_MS
+  const valid = (samples ?? [])
+    .filter((s) => Number.isFinite(s.at) && Number.isFinite(s.used) && s.at >= cycleStart && s.at <= now && s.used >= 0 && s.used <= 100)
+    .sort((a, b) => a.at - b.at)
+
+  // Deduplicate timestamps
+  const deduped: UsageSample[] = []
+  for (const s of valid) {
+    if (deduped.length === 0 || deduped[deduped.length - 1].at !== s.at) {
+      deduped.push(s)
+    } else {
+      deduped[deduped.length - 1] = s
+    }
+  }
+
+  if (deduped.length < 2) {
+    return {
+      currentBurnRate: null,
+      sustainableBurnRate: sustainablePerHour,
+      paceMultiplier: null,
+      estimatedExhaustionAt: null,
+      projectedRemainingAtReset: null,
+      forecastStatus: 'insufficient_data'
+    }
+  }
+
+  const latest = deduped[deduped.length - 1]
+  // Stale if latest observation is older than 45 minutes
+  if (now - latest.at > 45 * 60_000) {
+    return {
+      currentBurnRate: null,
+      sustainableBurnRate: sustainablePerHour,
+      paceMultiplier: null,
+      estimatedExhaustionAt: null,
+      projectedRemainingAtReset: null,
+      forecastStatus: 'stale'
+    }
+  }
+
+  // 4-hour window (or all available)
+  const window4h = deduped.filter((s) => s.at >= now - 4 * HOUR_MS)
+  const primaryWindow = window4h.length >= 2 ? window4h : deduped
+  const first = primaryWindow[0]
+  const deltaT = latest.at - first.at
+
+  // Need at least 10 minutes span to avoid pure quantization noise
+  if (deltaT < 10 * 60_000) {
+    return {
+      currentBurnRate: null,
+      sustainableBurnRate: sustainablePerHour,
+      paceMultiplier: null,
+      estimatedExhaustionAt: null,
+      projectedRemainingAtReset: null,
+      forecastStatus: 'insufficient_data'
+    }
+  }
+
+  const deltaUsed = Math.max(0, latest.used - first.used)
+  const rate4h = deltaUsed / (deltaT / HOUR_MS)
+
+  // Short 30-minute window for spike detection
+  const window30m = deduped.filter((s) => s.at >= now - 35 * 60_000)
+  let rate30m = rate4h
+  if (window30m.length >= 2) {
+    const first30 = window30m[0]
+    const deltaT30 = latest.at - first30.at
+    if (deltaT30 >= 10 * 60_000) {
+      rate30m = Math.max(0, latest.used - first30.used) / (deltaT30 / HOUR_MS)
+    }
+  }
+
+  let burnRate = Math.round(rate4h * 100) / 100
+  let status: ForecastStatus = 'normal'
+
+  // Classify states
+  if (rate30m > 2 * sustainablePerHour && rate30m > 1.5 * rate4h && rate30m > 0.1) {
+    status = 'spike'
+    burnRate = Math.round(rate30m * 100) / 100
+  } else if (burnRate > 1.2 * sustainablePerHour && burnRate > 0.05) {
+    status = 'unsustainable'
+  } else if (burnRate < 0.25 * sustainablePerHour) {
+    status = 'low'
+  } else {
+    status = 'normal'
+  }
+
+  const multiplier = sustainablePerHour > 0
+    ? Math.round((burnRate / sustainablePerHour) * 100) / 100
+    : burnRate > 0 ? Infinity : 1
+
+  let estimatedExhaustionAt: number | null = null
+  let projectedRemainingAtReset: number | null = null
+
+  if (burnRate > 0) {
+    const hoursToExhaustion = R / burnRate
+    const exhaustionTime = now + hoursToExhaustion * HOUR_MS
+    if (exhaustionTime < resetsAt) {
+      estimatedExhaustionAt = exhaustionTime
+      projectedRemainingAtReset = 0
+    } else {
+      estimatedExhaustionAt = null
+      const hoursToReset = Math.max(0, (resetsAt - now) / HOUR_MS)
+      projectedRemainingAtReset = Math.max(0, Math.round((R - burnRate * hoursToReset) * 10) / 10)
+    }
+  } else {
+    estimatedExhaustionAt = null
+    projectedRemainingAtReset = R
+  }
+
+  return {
+    currentBurnRate: burnRate,
+    sustainableBurnRate: Math.round(sustainablePerHour * 100) / 100,
+    paceMultiplier: multiplier,
+    estimatedExhaustionAt,
+    projectedRemainingAtReset,
+    forecastStatus: status
+  }
+}
+
 const SOURCE_RANK: Record<BaselineSource, number> = { history: 0, estimate: 1, reading: 2 }
 
 /**
- * Applies the baselines to fresh windows: the rows to draw and the baselines to store. Of the
- * candidates (recorded history, an estimate from Orca's daily tokens, this plugin's own first
- * reading), the one that starts earliest today wins, because it saw usage the others missed; on a
- * tie, recorded history beats an estimate, which beats a plain reading.
+ * Applies the baselines to fresh windows: the rows to draw and the baselines to store.
+ * Supports backward-compatible calls and optional samples buffer for burn rate calculations.
  */
 export function buildRows(
   windows: WeeklyWindow[],
   stored: Record<string, Baseline>,
   now: number,
   history: UsageHistory = {},
-  daily: DailyUsage = {}
-): { rows: PaceRow[]; baselines: Record<string, Baseline> } {
+  daily: DailyUsage = {},
+  samplesMap: Record<string, UsageSample[]> = {},
+  options: { reserveFraction?: number } = {}
+): {
+  rows: PaceRow[]
+  baselines: Record<string, Baseline>
+  samples: Record<string, UsageSample[]>
+} {
   const baselines: Record<string, Baseline> = {}
+  const nextSamples: Record<string, UsageSample[]> = { ...samplesMap }
+
   const rows = windows.map((w) => {
     const candidates = [
       baselineFromHistory(history[w.key] ?? [], w, now),
       estimateBaselineFromDaily(daily[w.key] ?? [], w, now),
       nextBaseline(stored[w.key], w, now)
     ].filter((b): b is Baseline => b !== undefined)
+
     const rank = (b: Baseline) => SOURCE_RANK[b.source ?? 'reading']
     let baseline = candidates.reduce((best, b) =>
       b.firstSeenAt < best.firstSeenAt || (b.firstSeenAt === best.firstSeenAt && rank(b) < rank(best)) ? b : best
     )
+
     if (baseline.source === 'estimate') {
       // Usage only grows during a window, so the start of today is at most any real reading today.
       const lowestReal = Math.min(...candidates.filter((b) => b.source !== 'estimate').map((b) => b.usedAtStart))
       if (lowestReal < baseline.usedAtStart) baseline = { ...baseline, usedAtStart: lowestReal }
     }
     baselines[w.key] = baseline
+
+    // Collect usage samples for burn rate engine
+    const windowSamples = [
+      ...(samplesMap[w.key] ?? []),
+      ...(history[w.key] ?? []),
+      { at: now, used: w.usedPercent }
+    ]
+    // Keep deduplicated samples in current cycle
+    const cycleStart = w.resetsAt - WEEK_MS
+    const cleanSamples = windowSamples
+      .filter((s) => s.at >= cycleStart && s.at <= now && Number.isFinite(s.at) && Number.isFinite(s.used))
+      .sort((a, b) => a.at - b.at)
+
+    nextSamples[w.key] = cleanSamples.slice(-200)
+
     const pace = computePace({ usedAtStart: baseline.usedAtStart, usedNow: w.usedPercent, resetsAt: w.resetsAt, now })
+    const sustainable = computeSustainableBudget({
+      remainingWeekly: pace.remainingWeekly,
+      now,
+      resetsAt: w.resetsAt,
+      reserveFraction: options.reserveFraction ?? 0
+    })
+
+    const forecast = computeBurnRate({
+      samples: cleanSamples,
+      now,
+      resetsAt: w.resetsAt,
+      remainingWeekly: sustainable.remainingWeekly,
+      sustainablePerHour: sustainable.sustainablePerHour
+    })
+
     return {
       key: w.key,
       provider: w.provider,
@@ -371,8 +669,17 @@ export function buildRows(
       baselineSource: baseline.source ?? 'reading',
       resetsAt: w.resetsAt,
       resetDescription: w.resetDescription,
-      ...pace
+      ...pace,
+      remainingTodayLive: sustainable.remainingTodayLive,
+      sustainablePerHour: sustainable.sustainablePerHour,
+      hoursUntilReset: sustainable.hoursUntilReset,
+      daysUntilReset: sustainable.daysUntilReset,
+      reservePercent: sustainable.reservePercent,
+      dailyBudget: pace.allowanceToday,
+      dailyDeviation: pace.usedToday - pace.allowanceToday,
+      ...forecast
     }
   })
-  return { rows, baselines }
+
+  return { rows, baselines, samples: nextSamples }
 }

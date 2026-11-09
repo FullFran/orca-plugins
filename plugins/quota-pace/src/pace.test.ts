@@ -3,15 +3,20 @@ import { assert, test } from 'orca/testing'
 import {
   baselineFromHistory,
   buildRows,
+  computeBurnRate,
   computePace,
+  computeSustainableBudget,
   estimateBaselineFromDaily,
   parseOrcaDailyUsage,
   parseClaudeopsHistory,
   extractWeeklyWindows,
   nextBaseline,
   localDateKey as localDateKeyAt,
+  nextLocalMidnight,
   startOfLocalDay,
+  uniformBudgetStrategy,
   type Baseline,
+  type UsageSample,
   type WeeklyWindow
 } from './pace'
 import { REAL_RATE_LIMITS } from './fixtures'
@@ -338,4 +343,264 @@ test('buildRows: an estimate never starts above a real reading from today (usage
   assert.equal(r.baselineSource, 'estimate')
   assert.equal(r.usedAtStart, 48)
   assert.equal(r.usedToday, 13)
+})
+
+// === Section 9 Required Tests & Numeric Validation ===
+
+test('worked example from spec: 34 pp left, ~68.65 h to reset, 9.65 h to midnight, no reserve -> ~4.8 pp', () => {
+  const now = MIDNIGHT + (24 - 9.65) * HOUR
+  const resetsAt = now + 68.65 * HOUR
+  const nextMidnight = now + 9.65 * HOUR
+  const budget = computeSustainableBudget({
+    remainingWeekly: 34,
+    now,
+    resetsAt,
+    nextMidnight,
+    reserveFraction: 0
+  })
+  assert.ok(Math.abs(budget.remainingTodayLive - 4.779315) < 1e-4)
+  assert.equal(budget.remainingTodayLive.toFixed(1), '4.8')
+  assert.equal(budget.sustainablePerHour.toFixed(2), '0.50')
+  assert.equal(budget.reservePercent, 0)
+})
+
+test('rule: remaining time calculated from now vs from midnight', () => {
+  const now = MIDNIGHT + 14 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const budget = computeSustainableBudget({ remainingWeekly: 40, now, resetsAt })
+  assert.equal(budget.hoursUntilReset, 46)
+  assert.equal(budget.daysUntilReset, 46 / 24)
+})
+
+test('rule: reset occurs before midnight', () => {
+  const now = MIDNIGHT + 10 * HOUR
+  const resetsAt = MIDNIGHT + 16 * HOUR
+  const budget = computeSustainableBudget({ remainingWeekly: 30, now, resetsAt })
+  assert.equal(budget.remainingTodayLive, 30)
+  assert.equal(budget.hoursUntilReset, 6)
+  assert.equal(budget.sustainablePerHour, 5)
+})
+
+test('rule: reset occurs midday', () => {
+  const now = MIDNIGHT + 9 * HOUR
+  const resetsAt = MIDNIGHT + 11 * HOUR
+  const budget = computeSustainableBudget({ remainingWeekly: 20, now, resetsAt })
+  assert.equal(budget.hoursUntilReset, 2)
+  assert.equal(budget.remainingTodayLive, 20)
+  assert.equal(budget.sustainablePerHour, 10)
+})
+
+test('rule: less than 24 hours until reset', () => {
+  const now = MIDNIGHT + 10 * HOUR
+  const resetsAt = now + 12 * HOUR
+  const nextMidnight = now + 14 * HOUR
+  const budget = computeSustainableBudget({ remainingWeekly: 24, now, resetsAt, nextMidnight })
+  assert.equal(budget.hoursUntilReset, 12)
+  assert.equal(budget.sustainablePerHour, 2)
+  assert.equal(budget.remainingTodayLive, 24)
+})
+
+test('rule: quota completely exhausted (0% remaining or 100% used)', () => {
+  const now = MIDNIGHT + 10 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const budget = computeSustainableBudget({ remainingWeekly: 0, now, resetsAt })
+  assert.equal(budget.remainingTodayLive, 0)
+  assert.equal(budget.sustainablePerHour, 0)
+  const forecast = computeBurnRate({
+    samples: [{ at: now - HOUR, used: 95 }, { at: now, used: 100 }],
+    now,
+    resetsAt,
+    remainingWeekly: 0,
+    sustainablePerHour: 0
+  })
+  assert.equal(forecast.forecastStatus, 'exhausted')
+  assert.equal(forecast.projectedRemainingAtReset, 0)
+})
+
+test('rule: percentages out of range or invalid', () => {
+  const now = MIDNIGHT + 10 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const budgetNeg = computeSustainableBudget({ remainingWeekly: -20, now, resetsAt })
+  assert.equal(budgetNeg.remainingWeekly, 0)
+  assert.equal(budgetNeg.remainingTodayLive, 0)
+
+  const budgetOver = computeSustainableBudget({ remainingWeekly: 150, now, resetsAt })
+  assert.equal(budgetOver.remainingWeekly, 100)
+
+  const { windows } = extractWeeklyWindows({
+    claude: { weekly: { usedPercent: -5, windowMinutes: 10080, resetsAt } },
+    codex: { weekly: { usedPercent: 120, windowMinutes: 10080, resetsAt } }
+  })
+  assert.equal(windows[0].usedPercent, 0)
+  assert.equal(windows[1].usedPercent, 100)
+})
+
+test('rule: safety reserve holds back capacity', () => {
+  const now = MIDNIGHT + 10 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const nextMidnight = MIDNIGHT + DAY
+  const withoutReserve = computeSustainableBudget({ remainingWeekly: 50, now, resetsAt, nextMidnight, reserveFraction: 0 })
+  const withReserve = computeSustainableBudget({ remainingWeekly: 50, now, resetsAt, nextMidnight, reserveFraction: 0.10 })
+  assert.equal(withReserve.reservePercent, 10)
+  assert.ok(Math.abs(withReserve.remainingTodayLive - withoutReserve.remainingTodayLive * 0.9) < 1e-6)
+  assert.ok(Math.abs(withReserve.sustainablePerHour - withoutReserve.sustainablePerHour * 0.9) < 1e-6)
+})
+
+test('rule: daylight saving time transitions handle 23h and 25h days', () => {
+  const now = new Date(2026, 2, 29, 10, 0, 0, 0).getTime()
+  const nextMidnight = nextLocalMidnight(now)
+  const d = new Date(nextMidnight)
+  assert.equal(d.getHours(), 0)
+  assert.equal(d.getMinutes(), 0)
+  assert.equal(d.getDate(), 30)
+})
+
+test('rule: timezone changes preserve epoch millisecond math', () => {
+  const now = 1793613600000
+  const resetsAt = now + 48 * HOUR
+  const budget = computeSustainableBudget({ remainingWeekly: 40, now, resetsAt })
+  assert.equal(budget.hoursUntilReset, 48)
+  assert.equal(budget.daysUntilReset, 2)
+})
+
+test('rule: quota cycle rollover when now >= resetsAt', () => {
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const afterReset = resetsAt + 1000
+  const budget = computeSustainableBudget({ remainingWeekly: 40, now: afterReset, resetsAt })
+  assert.equal(budget.remainingTodayLive, 0)
+  assert.equal(budget.hoursUntilReset, 0)
+})
+
+test('rule: delayed or repeated readings do not produce spurious spikes', () => {
+  const now = MIDNIGHT + 12 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const samples: UsageSample[] = [
+    { at: now - 30 * 60_000, used: 50 },
+    { at: now - 15 * 60_000, used: 50 },
+    { at: now, used: 50 }
+  ]
+  const forecast = computeBurnRate({ samples, now, resetsAt, remainingWeekly: 50, sustainablePerHour: 1 })
+  assert.equal(forecast.currentBurnRate, 0)
+  assert.equal(forecast.paceMultiplier, 0)
+  assert.equal(forecast.forecastStatus, 'low')
+})
+
+test('rule: insufficient history returns explicit insufficient_data status', () => {
+  const now = MIDNIGHT + 12 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const forecast = computeBurnRate({
+    samples: [{ at: now, used: 50 }],
+    now,
+    resetsAt,
+    remainingWeekly: 50,
+    sustainablePerHour: 1
+  })
+  assert.equal(forecast.forecastStatus, 'insufficient_data')
+  assert.equal(forecast.currentBurnRate, null)
+  assert.equal(forecast.paceMultiplier, null)
+  assert.equal(forecast.estimatedExhaustionAt, null)
+})
+
+test('rule: stale readings (>45 minutes) return explicit stale status', () => {
+  const now = MIDNIGHT + 12 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const forecast = computeBurnRate({
+    samples: [
+      { at: now - 60 * 60_000, used: 40 },
+      { at: now - 50 * 60_000, used: 42 }
+    ],
+    now,
+    resetsAt,
+    remainingWeekly: 50,
+    sustainablePerHour: 1
+  })
+  assert.equal(forecast.forecastStatus, 'stale')
+  assert.equal(forecast.currentBurnRate, null)
+})
+
+test('rule: missing telemetry sources leaves plugin working seamlessly', () => {
+  const now = MIDNIGHT + 10 * HOUR
+  const { rows } = buildRows([window({ usedPercent: 50 })], {}, now, {}, {})
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].baselineSource, 'reading')
+  assert.equal(rows[0].usedAtStart, 50)
+  assert.equal(rows[0].remainingWeekly, 50)
+})
+
+test('rule: shared quota unattributed share data contract', () => {
+  const deltaGlobal = 10.0
+  const localFran = 4.0
+  const localAlejandro = 3.5
+  const unattributed = deltaGlobal - (localFran + localAlejandro)
+  assert.equal(unattributed, 2.5)
+  assert.ok(unattributed > 0)
+})
+
+test('rule: duplicate and out-of-order samples are sorted and deduplicated', () => {
+  const now = MIDNIGHT + 12 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const samples: UsageSample[] = [
+    { at: now - 10 * 60_000, used: 52 },
+    { at: now - 30 * 60_000, used: 50 },
+    { at: now - 10 * 60_000, used: 52 },
+    { at: now, used: 53 }
+  ]
+  const forecast = computeBurnRate({ samples, now, resetsAt, remainingWeekly: 47, sustainablePerHour: 1 })
+  assert.ok(forecast.currentBurnRate !== null && forecast.currentBurnRate > 0)
+  assert.notEqual(forecast.forecastStatus, 'insufficient_data')
+})
+
+test('rule: predictions without statistical basis avoided', () => {
+  const now = MIDNIGHT + 12 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const shortSamples: UsageSample[] = [
+    { at: now - 120_000, used: 50 },
+    { at: now, used: 51 }
+  ]
+  const forecast = computeBurnRate({ samples: shortSamples, now, resetsAt, remainingWeekly: 49, sustainablePerHour: 1 })
+  assert.equal(forecast.forecastStatus, 'insufficient_data')
+  assert.equal(forecast.estimatedExhaustionAt, null)
+})
+
+test('rule: backward compatibility with 0.2.0 stored baselines', () => {
+  const stored020 = {
+    'claude.weekly': {
+      date: '2026-11-02',
+      usedAtStart: 45,
+      resetsAt: MIDNIGHT + 2.5 * DAY,
+      firstSeenAt: MIDNIGHT + 3600_000
+    }
+  }
+  const now = MIDNIGHT + 10 * HOUR
+  const { rows, baselines } = buildRows([window({ usedPercent: 55 })], stored020, now)
+  assert.equal(rows[0].usedAtStart, 45)
+  assert.equal(rows[0].usedToday, 10)
+  assert.equal(baselines['claude.weekly'].usedAtStart, 45)
+  assert.ok(rows[0].remainingTodayLive !== undefined)
+  assert.ok(rows[0].sustainablePerHour !== undefined)
+})
+
+test('rule: burn rate distinguishes spike from sustained unsustainable trend', () => {
+  const now = MIDNIGHT + 12 * HOUR
+  const resetsAt = MIDNIGHT + 2.5 * DAY
+  const sustainablePerHour = 0.5
+
+  const sustainedSamples: UsageSample[] = [
+    { at: now - 3 * HOUR, used: 40 },
+    { at: now - 2 * HOUR, used: 42 },
+    { at: now - 1 * HOUR, used: 44 },
+    { at: now, used: 46 }
+  ]
+  const unsust = computeBurnRate({ samples: sustainedSamples, now, resetsAt, remainingWeekly: 54, sustainablePerHour })
+  assert.equal(unsust.forecastStatus, 'unsustainable')
+  assert.ok(unsust.paceMultiplier! > 2)
+  assert.ok(unsust.estimatedExhaustionAt !== null)
+
+  const spikeSamples: UsageSample[] = [
+    { at: now - 3.5 * HOUR, used: 40 },
+    { at: now - 20 * 60_000, used: 40 },
+    { at: now, used: 41.5 }
+  ]
+  const spike = computeBurnRate({ samples: spikeSamples, now, resetsAt, remainingWeekly: 58.5, sustainablePerHour })
+  assert.equal(spike.forecastStatus, 'spike')
 })

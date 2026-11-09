@@ -23,6 +23,19 @@ function paceRow(overrides: Partial<PaceRow> = {}): PaceRow {
     remainingToday: 6,
     remainingWeekly: 30,
     overBudget: false,
+    remainingTodayLive: 4.8,
+    sustainablePerHour: 0.5,
+    hoursUntilReset: 60,
+    daysUntilReset: 2.5,
+    reservePercent: 0,
+    dailyBudget: 16,
+    dailyDeviation: -6,
+    currentBurnRate: 0.35,
+    sustainableBurnRate: 0.5,
+    paceMultiplier: 0.7,
+    estimatedExhaustionAt: null,
+    projectedRemainingAtReset: 9,
+    forecastStatus: 'normal',
     ...overrides
   }
 }
@@ -126,5 +139,42 @@ test('says where the start of today comes from', async () => {
   const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => both } }) })
   assert.match(texts(view), /Start of today from claudeops/)
   assert.match(texts(view), /estimated from Orca's token statistics/)
+  await view.unmount()
+})
+
+test('shows live allowance, sustainable pace and burn rate status', async () => {
+  const snap = snapshot({
+    rows: [
+      paceRow({
+        remainingTodayLive: 4.8,
+        sustainablePerHour: 0.5,
+        currentBurnRate: 0.35,
+        paceMultiplier: 0.7,
+        forecastStatus: 'normal'
+      })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+  const all = texts(view)
+  assert.match(all, /Live allowance: 4\.8 pp · Sustainable: 0\.50 pp\/h/)
+  assert.match(all, /Current pace: 0\.35 pp\/h \(0\.7x pace\)/)
+  await view.unmount()
+})
+
+test('shows warning when pace is unsustainable and projected exhaustion is before reset', async () => {
+  const snap = snapshot({
+    rows: [
+      paceRow({
+        forecastStatus: 'unsustainable',
+        currentBurnRate: 2.5,
+        paceMultiplier: 5.0,
+        estimatedExhaustionAt: MIDNIGHT + 20 * 36e5
+      })
+    ]
+  })
+  const view = await mount(panel, { host: mockHost({ requests: { 'pace.get': () => snap } }) })
+  const all = texts(view)
+  assert.match(all, /unsustainable/)
+  assert.match(all, /Projected exhaustion:/)
   await view.unmount()
 })
